@@ -36,9 +36,9 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.4.0",
 ]
-smolvla = ["lerobot[smolvla]~=0.5.1"]
-pi      = ["lerobot[pi]~=0.5.1"]
-all     = ["lerobot[smolvla,pi]~=0.5.1", "wandb~=0.24"]
+smolvla = ["lerobot[smolvla]~=0.6.1"]
+pi      = ["lerobot[pi]~=0.6.1"]
+all     = ["lerobot[smolvla,pi]~=0.6.1", "wandb~=0.24"]
 
 [project.scripts]
 anvil-eval = "anvil_eval.cli:main"
