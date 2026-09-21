@@ -43,8 +43,14 @@ dev = [
 # ceiling the packages pin. A re-lock that drifts to 0.11 fails to load
 # (undefined symbol) and lerobot falls back to the slow pyav decoder.
 # Move this together with the torch pin.
+#
+# Scoped to x86_64 Linux, the hosts this runs on. uv locks for every platform
+# at once, and on aarch64 Linux lerobot[dataset] itself requires torchcodec
+# >=0.11 — an unscoped bound leaves the workspace with no solution at all.
 [tool.uv]
-constraint-dependencies = ["torchcodec>=0.10,<0.11"]
+constraint-dependencies = [
+    "torchcodec>=0.10,<0.11 ; platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
 
 [tool.uv.workspace]
 members = [
