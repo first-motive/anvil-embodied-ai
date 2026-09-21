@@ -19,6 +19,16 @@ from mcap_converter.cli.dataset_viz import _detect_lan_ip, main, parse_episodes_
 from mcap_converter.viz.config import default_repo_id
 
 
+def _unwrapped(text: str) -> str:
+    """`text` with all whitespace removed.
+
+    Rich wraps output at the terminal width, and a long tmp_path pushes the
+    wrap into the middle of "info.json". What the message says is under test,
+    not where the console broke it.
+    """
+    return "".join(text.split())
+
+
 def _make_dataset(tmp_path: Path, *, total_episodes: int = 5) -> Path:
     """Build a minimal valid synthetic LeRobot v3.0 dataset root under tmp_path."""
     root = tmp_path / "my-dataset"
@@ -73,8 +83,8 @@ class TestDatasetValidation:
         rc = main([str(bad_root)])
 
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "info.json" in out or "does not exist" in out
+        out = _unwrapped(capsys.readouterr().out)
+        assert "info.json" in out or "doesnotexist" in out
 
     def test_missing_root_directory_returns_1(self, tmp_path, capsys):
         rc = main([str(tmp_path / "does-not-exist")])
@@ -101,8 +111,8 @@ class TestListEpisodes:
         rc = main([str(bad_root), "--list-episodes"])
 
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "info.json" in out or "does not exist" in out
+        out = _unwrapped(capsys.readouterr().out)
+        assert "info.json" in out or "doesnotexist" in out
 
 
 class TestRepoIdDefault:

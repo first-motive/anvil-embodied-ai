@@ -295,7 +295,7 @@ def convert_session(
     config: DataConfig = None,
     buffer_seconds: float = 5.0,
     config_path: str = None,
-    vcodec: str = "h264",
+    vcodec: str | None = None,
     resume_from: int = 0,
     max_episodes: int = None,
     mcap_files: List[Path] = None,
@@ -317,7 +317,7 @@ def convert_session(
         config: Data configuration
         buffer_seconds: Buffer window for time alignment in seconds (default: 5.0)
         config_path: Path to the conversion config YAML file (for copying to output)
-        vcodec: Video codec for encoding ("h264", "hevc", or "libsvtav1")
+        vcodec: Video codec override, or None for LeRobot's own encoder defaults
     """
     session_start_time = time.time()
 
@@ -767,9 +767,10 @@ examples:
         help="buffer window for time alignment in seconds (default: 5.0)",
     )
     parser.add_argument(
-        "--vcodec", type=str, default="h264",
+        "--vcodec", type=str, default=None,
         choices=["h264", "hevc", "libsvtav1"],
-        help="video codec (default: h264). h264 is widely viewable; libsvtav1 gives best compression",
+        help="video codec; default is LeRobot's own (libsvtav1, best compression). "
+             "h264 is more widely viewable and cheaper to decode without torchcodec",
     )
     parser.add_argument(
         "--resume", action="store_true",
@@ -950,7 +951,7 @@ examples:
     banner.add_row("Source Session FPS", input_fps_label)
     banner.add_row("Output FPS", output_fps_label)
     banner.add_row("Buffer", f"{args.buffer_seconds}s")
-    banner.add_row("Video codec", args.vcodec)
+    banner.add_row("Video codec", args.vcodec or "lerobot default (libsvtav1)")
     banner.add_row("Resume", "yes" if args.resume else "no")
     banner.add_row("Max episodes", str(args.max_episodes) if args.max_episodes else "all")
     if config.action_from_observation:

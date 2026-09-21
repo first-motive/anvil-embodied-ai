@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.video_utils import RGBEncoderConfig
 
 from ..config.schema import DEFAULT_DATA_CONFIG, DataConfig
 
@@ -172,7 +173,7 @@ class LeRobotWriter:
         robot_type: str = "anvil_openarm",
         fps: int = 30,
         config: DataConfig = DEFAULT_DATA_CONFIG,
-        vcodec: str = "h264",
+        vcodec: str | None = None,
         quiet: bool = False,
     ):
         """
@@ -184,7 +185,8 @@ class LeRobotWriter:
             robot_type: Robot type identifier
             fps: Video frames per second
             config: Data configuration
-            vcodec: Video codec for encoding ("h264", "hevc", or "libsvtav1")
+            vcodec: Video codec override, or None for LeRobot's own encoder
+                defaults (libsvtav1, with the crf and preset tuned to it)
             quiet: If True, suppress all print output (default: False)
         """
         self.output_dir = Path(output_dir)
@@ -194,6 +196,18 @@ class LeRobotWriter:
         self.config = config
         self.vcodec = vcodec
         self.quiet = quiet
+
+    def _encoder_kwargs(self) -> Dict[str, Any]:
+        """The encoder override for LeRobot, or nothing when none was asked for.
+
+        LeRobot ships a tuned encoder pairing — libsvtav1 with the crf and preset
+        that suit it — so a codec is forwarded only when the caller names one.
+        Half-overriding that set is how a preset meant for one codec ends up in
+        front of another.
+        """
+        if not self.vcodec:
+            return {}
+        return {"rgb_encoder": RGBEncoderConfig(vcodec=self.vcodec)}
 
     def create_dataset(
         self,
@@ -230,7 +244,7 @@ class LeRobotWriter:
             robot_type=self.robot_type,
             features=features,
             use_videos=True,
-            vcodec=self.vcodec,
+            **self._encoder_kwargs(),
         )
 
         return dataset
@@ -419,7 +433,7 @@ class LeRobotWriter:
         dataset = LeRobotDataset.resume(
             repo_id=self.repo_id,
             root=str(self.output_dir),
-            vcodec=self.vcodec,
+            **self._encoder_kwargs(),
         )
         _patch_resume_video_continuation(dataset)
         return dataset
