@@ -34,13 +34,13 @@
     # Name of the camera optical frame this node publishes as a static transform.
     camera_frame: cam_chest_optical
 
-    # ESTIMATE: height of the table top in world_frame, in metres, measured in the test
-    # session. Must match table_z in task.yaml, or the arm reaches above or into the table.
-    table_z: 0.22
+    # Height of the table top in world_frame, in metres: tape-measured on 2026-10-01 (see
+    # task.yaml). Must match table_z there, or the arm reaches above or into the table.
+    table_z: 0.207
 
-    # ESTIMATE: height of an upright can, in metres. The can's blob centroid is placed on
-    # the plane table_z + can_height / 2.
-    can_height: 0.12
+    # Height of an upright can, in metres (the 7UP can used for the demos, measured). The
+    # can's blob centroid is placed on the plane table_z + can_height / 2.
+    can_height: 0.135
 
     # Detector tuning, passed to classical_control.detector.DetectorParams. Sizes are
     # fractions of the image so they hold at any process resolution. Defaults were tuned

@@ -75,8 +75,8 @@ Nothing is published for a missing detection, so the task node sees a stale pose
 | `process_rate_hz` | double | 5.0 | Detection rate; the task needs one fresh pose, not 60 Hz |
 | `debug_rate_hz` | double | 1.0 | |
 | `world_frame`, `camera_frame` | string | `world`, `cam_chest_optical` | |
-| `table_z` | double | 0.22 | Estimate; must match `task.yaml` |
-| `can_height` | double | 0.12 | Estimate |
+| `table_z` | double | 0.207 | Measured; must match `task.yaml` |
+| `can_height` | double | 0.135 | Measured (demo can) |
 | `detector.*` | mixed | see `config/perception.yaml` | Thresholds, as fractions of image size |
 
 ### task_node
@@ -92,7 +92,7 @@ runs, and nothing otherwise.
 | `frame_id` | string | `world` | |
 | `control_rate_hz` | double | 30.0 | |
 | `workspace_min_m`, `workspace_max_m` | double[3] | [0.05, -0.55, 0.0], [0.65, 0.15, 0.70] | TCP box; all 104 demo positions fall inside it |
-| `table_z`, `z_margin_m` | double | 0.22, 0.01 | TCP floor is `table_z + z_margin_m`; `table_z` is an estimate |
+| `table_z`, `z_margin_m` | double | 0.207, 0.01 | TCP floor is `table_z + z_margin_m`; `table_z` is measured |
 | `max_position_step_m`, `max_rotation_step_rad` | double | 0.005, 0.05 | Per-tick clamp; 0.15 m/s at 30 Hz |
 | `gripper_min_m`, `gripper_max_m` | double | 0.0, 0.05 | |
 | `v_max_mps`, `w_max_radps` | double | 0.10, 0.5 | Peak segment speeds before `speed_scale` |
@@ -154,9 +154,9 @@ then run `docker compose up -d` in `~/anvil-loader`. Set it back to
 
 ## Calibrating The Chest Camera
 
-`config/camera_chest.yaml` ships with estimates: an equidistant fisheye with
-f = 850 px and a placeholder mount. No published pose exists for this camera, so the
-arm calibrates it. An ArUco marker on the right hand gives known 3D points, and
+`config/camera_chest.yaml` holds the calibration from 2026-10-01; its header lists the
+held-out checks it passed. Re-run this procedure if the camera or its mount is touched.
+No published pose exists for this camera, so the arm calibrates it. An ArUco marker on the right hand gives known 3D points, and
 `calibrate_chest` fits the intrinsics, the camera pose in `world`, and the marker's
 offset on the hand in one solve. `world` and `follower_body_link0` are the same frame
 on this robot.
@@ -191,7 +191,7 @@ marker on hand → arm sweeps ~15 poses → chest frame + measured TCP per pose
    `config/camera_chest.yaml`, then `down` and `up`.
 7. Run `overlay` with the arm at five poses. The projected TCP should land within about
    10 px of the gripper.
-8. Measure `table_z` (base plate bottom to table top; the demos suggest about 0.28 m)
+8. Measure `table_z` (base plate bottom to table top; 0.207 m on 2026-10-01)
    and set it in both `perception.yaml` and `task.yaml`. Run `eval` and set
    `can_xy_bias_m` from its `suggested_can_xy_bias`.
 

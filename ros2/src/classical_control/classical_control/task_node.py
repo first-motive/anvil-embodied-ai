@@ -72,7 +72,7 @@ PARAMETER_DEFAULTS = {
     "control_rate_hz": 30.0,
     "workspace_min_m": [0.05, -0.55, 0.0],
     "workspace_max_m": [0.65, 0.15, 0.70],
-    "table_z": 0.22,
+    "table_z": 0.207,
     "z_margin_m": 0.01,
     "max_position_step_m": 0.005,
     "max_rotation_step_rad": 0.05,
