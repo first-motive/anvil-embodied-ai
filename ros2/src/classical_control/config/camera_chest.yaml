@@ -4,34 +4,39 @@
 # parameter file.
 #
 # The camera is a UVC fisheye (USB id 1bcf:2d4f) streaming 1920x1080 JPEG. Its driver
-# publishes an empty camera_info and no datasheet for this module was found, so every
-# number below is an estimate until a calibration replaces it.
+# publishes an empty camera_info and no datasheet or published mount exists, so these
+# values come from calibrate_chest on fm-rob-01, 2026-10-01: an ArUco marker (id 1, 40 mm)
+# on the right gripper's wrist-camera bracket, swept through 15 poses near home; marker in
+# 9 views, median corner reprojection 0.80 px, worst view 1.40 px.
+#
+# Held-out checks, none of them used by the fit:
+# - home pose: predicted marker within 2 px horizontally and 34 px vertically of where it
+#   was detected (home sits above the sweep, near the image's top edge);
+# - offline eval on the 104 demos at the measured table height: paper xy median 20 mm,
+#   p90 39 mm; can xy median 12-20 mm where the can was detected correctly.
+#
+# Re-run `run_classical.sh calibrate` if the camera or its mount is touched.
 
 # Intrinsics at the native 1920x1080 resolution, OpenCV fisheye (equidistant) model.
 # The node scales them to its processing resolution with FisheyeCamera.scaled.
 intrinsics:
   width: 1920    # px
   height: 1080   # px
-  # ESTIMATE. Equidistant model r = f * theta. The chest images bend the wall corner only
-  # mildly, which suggests roughly 130 deg horizontal field of view rather than a full
-  # 180 deg lens: f = 960 px / (65 deg in rad) ~= 850 px. Replace with a checkerboard
-  # cv2.fisheye.calibrate result.
-  fx: 850.0      # px
-  fy: 850.0      # px
-  # ESTIMATE. Image centre; a calibration typically moves it by tens of pixels.
-  cx: 960.0      # px
-  cy: 540.0      # px
-  # ESTIMATE. k1..k4 of cv2.fisheye. Zero means the pure equidistant model.
-  distortion: [0.0, 0.0, 0.0, 0.0]
+  fx: 740.244    # px
+  fy: 750.103    # px
+  cx: 958.504    # px
+  cy: 573.152    # px
+  # k1..k4 of cv2.fisheye. k3 and k4 are held at zero: the marker never reaches the image
+  # edges, so they cannot be measured.
+  distortion: [0.111681, -0.028494, 0.0, 0.0]
 
 # Pose of the camera optical frame (x right, y down, z forward) in the robot body frame.
 # Published by perception_node as a static transform parent_frame -> cam_chest_optical.
+# On this robot follower_body_link0 coincides with world (identity in the URDF): x forward,
+# y left, z up, origin at the bottom of the body base plate.
 extrinsic:
-  # Robot frame the camera is rigidly fixed to. Must exist on /tf.
   parent_frame: follower_body_link0
-  # PLACEHOLDER: replace with a tape measurement or the PnP fit from eval_offline.
-  # Assumes parent_frame has x forward and z up, with the camera 0.35 m above its origin.
-  translation_xyz: [0.0, 0.0, 0.35]   # m
-  # PLACEHOLDER: replace with a tape measurement or the PnP fit from eval_offline.
-  # Optical frame facing parent +x, pitched 45 deg down toward the table.
-  rotation_xyzw: [-0.65328148, 0.65328148, -0.27059805, 0.27059805]
+  # Lens about 10 cm forward of the body column and 58 cm up, on the centre line.
+  translation_xyz: [0.100322, -0.009243, 0.580651]   # m
+  # Looking forward and 52.6 deg down, 1.5 deg to the right.
+  rotation_xyzw: [-0.665843, 0.673688, -0.231236, 0.222099]

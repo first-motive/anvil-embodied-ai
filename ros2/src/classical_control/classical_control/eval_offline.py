@@ -394,8 +394,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--ground-truth", type=Path, required=True, help="ground_truth.csv")
     parser.add_argument("--camera-yaml", type=Path, required=True, help="chest camera yaml")
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--table-z", type=float, default=0.22, help="table height in world, m")
-    parser.add_argument("--can-height", type=float, default=0.12, help="can height, m")
+    parser.add_argument("--table-z", type=float, default=0.207, help="table height in world, m")
+    parser.add_argument("--can-height", type=float, default=0.135, help="can height, m")
     parser.add_argument(
         "--scale", type=float, default=0.5, help="detect on frames resized by this factor"
     )

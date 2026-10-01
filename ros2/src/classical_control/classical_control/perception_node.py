@@ -69,8 +69,8 @@ class PerceptionNode(Node):
         self.declare_parameter("debug_rate_hz", 1.0)
         self.declare_parameter("world_frame", "world")
         self.declare_parameter("camera_frame", "cam_chest_optical")
-        self.declare_parameter("table_z", 0.22)
-        self.declare_parameter("can_height", 0.12)
+        self.declare_parameter("table_z", 0.207)
+        self.declare_parameter("can_height", 0.135)
         for field in dataclasses.fields(DetectorParams):
             self.declare_parameter(f"detector.{field.name}", field.default)
 

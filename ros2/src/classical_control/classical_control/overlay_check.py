@@ -104,7 +104,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--camera-yaml", type=Path, required=True, help="chest camera yaml")
     parser.add_argument("--output", type=Path, default=Path("overlay_check.jpg"))
-    parser.add_argument("--table-z", type=float, default=0.22, help="table height in world, m")
+    parser.add_argument("--table-z", type=float, default=0.207, help="table height in world, m")
     parser.add_argument("--spacing", type=float, default=0.05, help="grid spacing, m")
     parser.add_argument(
         "--half-extent", type=float, default=0.3, help="grid half-width around the TCP, m"

@@ -21,9 +21,10 @@
     workspace_min_m: [0.05, -0.55, 0.0]
     workspace_max_m: [0.65, 0.15, 0.70]
 
-    # Table surface height. ESTIMATE, not measured: confirm by jogging the TCP to the table
-    # before trusting it. The TCP floor is table_z + z_margin_m.
-    table_z: 0.22
+    # Table surface height: tape-measured from the bottom of the body base plate (the
+    # follower_body_link0 origin) to the table top, 206-208 mm, on 2026-10-01. Must match
+    # perception.yaml. The TCP floor is table_z + z_margin_m.
+    table_z: 0.207
     # Clearance kept between TCP and table, in metres.
     z_margin_m: 0.01
 
