@@ -160,6 +160,11 @@ def test_fit_recovers_marker_offset_and_focal_length(recovered) -> None:
     assert recovered.camera.fy == pytest.approx(TRUE_CAMERA.fy, rel=0.05)
 
 
+def test_fit_holds_edge_distortion_terms_at_zero(recovered) -> None:
+    # A hand-held marker never reaches the image edges, so k3 and k4 are not fitted.
+    assert recovered.camera.distortion[2:] == (0.0, 0.0)
+
+
 def test_fit_reports_one_error_per_view(recovered, sweep: list[Pose]) -> None:
     assert recovered.view_errors_px.shape == (len(sweep),)
     assert np.all(recovered.view_errors_px < 2.0)

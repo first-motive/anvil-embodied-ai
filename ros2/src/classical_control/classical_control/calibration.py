@@ -473,6 +473,11 @@ def fit(
     upper[:4] = [intrinsics[0] * 3, intrinsics[1] * 3, float(width), float(height)]
     lower[4:8], upper[4:8] = -_MAX_ABS_K, _MAX_ABS_K
     intrinsics[4:8] = np.clip(intrinsics[4:8], -_MAX_ABS_K, _MAX_ABS_K)
+    # k3 and k4 shape the image edges, which a hand-held marker never reaches: left free
+    # they ran to their bounds in synthetic sweeps and would bend the rest of the image.
+    # Hold them at zero and fit fx, fy, cx, cy, k1, k2 only.
+    intrinsics[6:8] = 0.0
+    free = np.r_[0:6, 8:20]
 
     params = np.concatenate([intrinsics, _vector(T_world_optical), _vector(T_tcp_marker)])
     try:
@@ -484,27 +489,35 @@ def fit(
             f_scale=_LOSS_SCALE_PX,
         )
         params[8:] = poses_only.x
-        # Stage 2: free everything.
-        solution = least_squares(
-            residuals,
-            params,
-            bounds=(lower, upper),
+
+        # Stage 2: free everything except k3 and k4.
+        def residuals_free(free_params: np.ndarray) -> np.ndarray:
+            full = params.copy()
+            full[free] = free_params
+            return residuals(full)
+
+        refined = least_squares(
+            residuals_free,
+            params[free],
+            bounds=(lower[free], upper[free]),
             loss="soft_l1",
             f_scale=_LOSS_SCALE_PX,
             x_scale="jac",
         )
+        solution_x = params.copy()
+        solution_x[free] = refined.x
     except (ValueError, cv2.error) as error:
         return failure(f"least squares failed: {error}")
 
-    camera, T_world_optical, T_tcp_marker = _unpack(solution.x, width, height)
-    errors = np.linalg.norm(residuals(solution.x).reshape(n_views, 4, 2), axis=2)
+    camera, T_world_optical, T_tcp_marker = _unpack(solution_x, width, height)
+    errors = np.linalg.norm(residuals(solution_x).reshape(n_views, 4, 2), axis=2)
     view_errors = errors.mean(axis=1)
     median_error = float(np.median(errors))
-    finite = np.isfinite(solution.x).all() and math.isfinite(median_error)
-    success = bool(solution.success and finite)
+    finite = np.isfinite(solution_x).all() and math.isfinite(median_error)
+    success = bool(refined.success and finite)
     message = (
         f"{init_note}; {n_views} views, median corner error {median_error:.2f} px, "
-        f"worst view {float(view_errors.max()):.2f} px; solver: {solution.message}"
+        f"worst view {float(view_errors.max()):.2f} px; solver: {refined.message}"
     )
     return CalibrationResult(
         camera=camera,
