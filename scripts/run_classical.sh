@@ -9,6 +9,9 @@
 #   up | down | logs       Start, stop, or follow the perception + task nodes
 #   mine [args]            Mine grasp/place params from the demos → data/classical/
 #   eval [args]            Offline perception eval vs mined ground truth → data/classical/eval/
+#   calibrate [args]       Sweep the arm with the hand marker and fit the chest camera
+#                          → data/classical/calibration/ (--dry-run moves nothing,
+#                          --fit-only re-fits saved views, --marker-id/--marker-size)
 #   overlay [args]         Project the live TCP and a table grid onto a chest frame → jpg
 #   background             Capture the empty-table reference (clear the table first)
 #   trial [--dry-run] [--n N] [--speed S]
@@ -16,14 +19,14 @@
 #                          one row per goal to data/classical/trials.csv
 #   -h | --help            Show this message
 #
-# Extra args after mine/eval/overlay pass straight to the tool.
+# Extra args after mine/eval/calibrate/overlay pass straight to the tool.
 #
 # Environment variables:
 #   RECORDINGS_DIR   Demo episodes (default: ~/anvil-loader/data/recordings/pick-and-place-can)
 #   ROS_DOMAIN_ID    ROS domain (default: 1, matching the loader)
 #
-# The task node commands the arm through commanded EE, which bypasses the loader's
-# own limiter. Keep the webapp e-stop in reach for every trial that is not --dry-run.
+# The task node and calibrate move the arm through commanded EE, which bypasses the
+# loader's own limiter. Keep the webapp e-stop in reach for every run that is not --dry-run.
 
 set -euo pipefail
 
@@ -131,6 +134,13 @@ case "$VERB" in
         run_tool ros2 run classical_control eval_offline \
             --recordings /recordings --ground-truth /data/ground_truth.csv \
             --camera-yaml /workspace/config/camera_chest.yaml --out-dir /data/eval "$@"
+        ;;
+    calibrate)
+        run_tool ros2 run classical_control calibrate_chest \
+            --camera-yaml /workspace/config/camera_chest.yaml \
+            --task-params /workspace/config/task.yaml \
+            --mined-params /data/mined_params.yaml \
+            --out-dir /data/calibration "$@"
         ;;
     overlay)
         run_tool ros2 run classical_control overlay_check \
