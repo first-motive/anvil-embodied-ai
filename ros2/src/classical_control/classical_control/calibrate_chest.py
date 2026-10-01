@@ -72,7 +72,6 @@ from classical_control.eval_offline import (
 )
 from classical_control.localise import ChestCameraConfig
 from classical_control.safety import SafetyLimiter, SafetyLimits
-from classical_control.task_machine import mined_targets
 from classical_control.trajectory import Pose, plan_segment, segment_duration
 
 #: Abort reason for Ctrl-C, which skips the fit.
@@ -655,11 +654,44 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--camera-yaml", type=Path, required=True, help="initial camera yaml")
     parser.add_argument("--task-params", type=Path, help="task.yaml: limits, home, rate")
-    parser.add_argument("--mined-params", type=Path, help="mined_params.yaml: sweep orientation")
     parser.add_argument("--out-dir", type=Path, default=Path("/data/calibration"))
     parser.add_argument("--marker-size", type=float, default=0.05, help="marker side, m")
     parser.add_argument("--marker-id", type=int, default=0)
     parser.add_argument("--count", type=int, default=15, help="sweep poses")
+    # The first live sweep centred on the demos' grasp orientation and turned the hand
+    # bracket edge-on to the chest camera; at home the marker faces it. So the sweep keeps
+    # home's orientation and stays low and near home, where the marker sits inside the
+    # frame. These defaults came from that run; adjust them on the robot if views miss.
+    parser.add_argument(
+        "--center",
+        type=float,
+        nargs=2,
+        default=(0.35, -0.15),
+        metavar=("X", "Y"),
+        help="sweep centre in world, m",
+    )
+    parser.add_argument(
+        "--half-extent",
+        type=float,
+        nargs=2,
+        default=(0.05, 0.05),
+        metavar=("DX", "DY"),
+        help="sweep half-size in x and y, m",
+    )
+    parser.add_argument(
+        "--heights",
+        type=float,
+        nargs=2,
+        default=(0.42, 0.47),
+        metavar=("Z_LOW", "Z_HIGH"),
+        help="sweep TCP heights, m",
+    )
+    parser.add_argument(
+        "--max-tilt",
+        type=float,
+        default=0.25,
+        help="largest tilt away from home's orientation, rad",
+    )
     parser.add_argument("--v-max", type=float, default=0.05, help="peak linear speed, m/s")
     parser.add_argument("--w-max", type=float, default=0.25, help="peak angular speed, rad/s")
     parser.add_argument("--settle-s", type=float, default=1.0, help="hold before capture, s")
@@ -668,10 +700,25 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     mode.add_argument("--fit-only", action="store_true", help=f"re-fit out-dir/{SAMPLES_FILE}")
     add_parent_to_world_argument(parser)
     args = parser.parse_args(argv)
-    if not args.fit_only and (args.task_params is None or args.mined_params is None):
-        parser.error("--task-params and --mined-params are required unless --fit-only")
+    if not args.fit_only and args.task_params is None:
+        parser.error("--task-params is required unless --fit-only")
     if args.v_max <= 0.0 or args.w_max <= 0.0 or args.settle_s < 0.0:
         parser.error("--v-max and --w-max must be positive and --settle-s non-negative")
+    numbers = [
+        args.marker_size,
+        args.v_max,
+        args.w_max,
+        args.settle_s,
+        args.max_tilt,
+        *args.center,
+        *args.half_extent,
+        *args.heights,
+    ]
+    # argparse takes "nan" and "inf" as floats, and NaN passes every comparison below.
+    if not all(math.isfinite(v) for v in numbers):
+        parser.error("numeric options must be finite")
+    if min(args.half_extent) <= 0.0 or not 0.0 < args.max_tilt <= 0.5:
+        parser.error("--half-extent must be positive and --max-tilt in (0, 0.5] rad")
     return args
 
 
@@ -700,9 +747,16 @@ def main(argv: Sequence[str] | None = None) -> None:
             f"Refusing: --v-max {args.v_max} / --w-max {args.w_max} exceed task.yaml's "
             f"{params['v_max_mps']} m/s / {params['w_max_radps']} rad/s"
         )
-    _, _, orientation = mined_targets(yaml.safe_load(args.mined_params.expanduser().read_text()))
     try:
-        targets = sweep_poses(orientation, limiter, count=args.count)
+        targets = sweep_poses(
+            home.quat_xyzw,
+            limiter,
+            count=args.count,
+            center_xy=tuple(args.center),
+            half_extent_xy=tuple(args.half_extent),
+            heights=tuple(args.heights),
+            max_tilt_rad=args.max_tilt,
+        )
     except ValueError as error:
         raise SystemExit(f"Refusing: {error}") from error
     outside = workspace_violations([*targets, home], limiter)

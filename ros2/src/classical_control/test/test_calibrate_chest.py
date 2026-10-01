@@ -13,8 +13,10 @@ from classical_control.calibrate_chest import (
     limiter_from_params,
     load_task_params,
     outlier_views,
+    parse_args,
     workspace_violations,
 )
+from classical_control.calibration import sweep_poses
 from classical_control.trajectory import Pose
 from scipy.spatial.transform import Rotation
 
@@ -144,3 +146,38 @@ def test_outlier_views_uses_three_times_the_median_with_a_floor():
     assert outlier_views([0.1, 0.1, 0.1, 2.5]) == []
     assert outlier_views([2.0, 2.0, 2.0, 7.0]) == [3]
     assert outlier_views([]) == []
+
+
+def test_default_sweep_keeps_home_orientation_within_max_tilt():
+    # The first live sweep used the demos' grasp orientation and turned the marker away
+    # from the chest camera; the defaults now stay near home, where it faces the camera.
+    params = load_task_params(CONFIG / "task.yaml")
+    home = home_from_params(params)
+    args = parse_args(["--camera-yaml", "x", "--task-params", "x"])
+    targets = sweep_poses(
+        home.quat_xyzw,
+        limiter_from_params(params),
+        count=args.count,
+        center_xy=tuple(args.center),
+        half_extent_xy=tuple(args.half_extent),
+        heights=tuple(args.heights),
+        max_tilt_rad=args.max_tilt,
+    )
+    assert len(targets) == args.count
+    tilts = [(home.rotation.inv() * pose.rotation).magnitude() for pose in targets]
+    assert max(tilts) <= args.max_tilt + 1e-9
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--max-tilt", "0.8"],
+        ["--half-extent", "0", "0.05"],
+        ["--center", "nan", "-0.15"],
+        ["--heights", "0.42", "inf"],
+        ["--v-max", "nan"],
+    ],
+)
+def test_sweep_options_out_of_range_are_refused(extra):
+    with pytest.raises(SystemExit):
+        parse_args(["--camera-yaml", "x", "--task-params", "x", *extra])
