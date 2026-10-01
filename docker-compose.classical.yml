@@ -1,0 +1,26 @@
+# Classical can-on-paper baseline, run on the robot PC next to the loader.
+# Drive it with scripts/run_classical.sh rather than calling compose directly.
+services:
+  classical:
+    image: classical-control:latest
+    build:
+      context: .
+      dockerfile: docker/classical/Dockerfile
+    container_name: classical-control
+    network_mode: host
+    ipc: host
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-1}
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///workspace/configs/cyclonedds/robot_local.xml
+    volumes:
+      # The 104 teleop demos the miner and offline eval read. Never written.
+      - ${RECORDINGS_DIR:-${HOME}/anvil-loader/data/recordings/pick-and-place-can}:/recordings:ro
+      # Run-time outputs: mined params, background, eval reports, overlays, trials.csv.
+      - ./data/classical:/data
+      # Repo config, so a calibration edit applies on restart without a rebuild.
+      - ./ros2/src/classical_control/config:/workspace/config:ro
+    command: >
+      ros2 launch classical_control classical.launch.py
+        config_dir:=/workspace/config
+        data_dir:=/data
