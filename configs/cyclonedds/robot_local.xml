@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- CycloneDDS config for a container running on the robot PC itself, next to
+     the loader (host network). Pinned to eno1 because the robot PC has several
+     interfaces and the loader pins the same one; autodetermine can pick another
+     and topics then flow intermittently. Multicast on, matching the loader. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+    <Domain id="any">
+        <General>
+            <Interfaces>
+                <NetworkInterface name="eno1"/>
+            </Interfaces>
+            <AllowMulticast>true</AllowMulticast>
+            <MaxMessageSize>65535B</MaxMessageSize>
+            <FragmentSize>4000B</FragmentSize>
+        </General>
+        <Internal>
+            <SocketReceiveBufferSize min="128MB"/>
+            <Watermarks>
+                <WhcHigh>8MB</WhcHigh>
+            </Watermarks>
+        </Internal>
+    </Domain>
+</CycloneDDS>

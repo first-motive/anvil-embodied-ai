@@ -138,3 +138,9 @@ debug_images/
 
 # Working plans, not committed history
 plans/
+
+# Proprietary anvil_msgs, extracted by scripts/vendor_anvil_msgs.sh
+vendor/
+
+# Classical baseline outputs (mined params, eval reports, trial logs)
+data/classical/

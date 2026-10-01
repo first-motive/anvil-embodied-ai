@@ -1,0 +1,37 @@
+# Chest camera model for the classical baseline: intrinsics plus the fixed mounting on the
+# robot body. Read by perception_node (camera_config_file parameter) through
+# classical_control.localise.ChestCameraConfig. This is a plain yaml file, not a ROS
+# parameter file.
+#
+# The camera is a UVC fisheye (USB id 1bcf:2d4f) streaming 1920x1080 JPEG. Its driver
+# publishes an empty camera_info and no datasheet for this module was found, so every
+# number below is an estimate until a calibration replaces it.
+
+# Intrinsics at the native 1920x1080 resolution, OpenCV fisheye (equidistant) model.
+# The node scales them to its processing resolution with FisheyeCamera.scaled.
+intrinsics:
+  width: 1920    # px
+  height: 1080   # px
+  # ESTIMATE. Equidistant model r = f * theta. The chest images bend the wall corner only
+  # mildly, which suggests roughly 130 deg horizontal field of view rather than a full
+  # 180 deg lens: f = 960 px / (65 deg in rad) ~= 850 px. Replace with a checkerboard
+  # cv2.fisheye.calibrate result.
+  fx: 850.0      # px
+  fy: 850.0      # px
+  # ESTIMATE. Image centre; a calibration typically moves it by tens of pixels.
+  cx: 960.0      # px
+  cy: 540.0      # px
+  # ESTIMATE. k1..k4 of cv2.fisheye. Zero means the pure equidistant model.
+  distortion: [0.0, 0.0, 0.0, 0.0]
+
+# Pose of the camera optical frame (x right, y down, z forward) in the robot body frame.
+# Published by perception_node as a static transform parent_frame -> cam_chest_optical.
+extrinsic:
+  # Robot frame the camera is rigidly fixed to. Must exist on /tf.
+  parent_frame: follower_body_link0
+  # PLACEHOLDER: replace with a tape measurement or the PnP fit from eval_offline.
+  # Assumes parent_frame has x forward and z up, with the camera 0.35 m above its origin.
+  translation_xyz: [0.0, 0.0, 0.35]   # m
+  # PLACEHOLDER: replace with a tape measurement or the PnP fit from eval_offline.
+  # Optical frame facing parent +x, pitched 45 deg down toward the table.
+  rotation_xyzw: [-0.65328148, 0.65328148, -0.27059805, 0.27059805]
