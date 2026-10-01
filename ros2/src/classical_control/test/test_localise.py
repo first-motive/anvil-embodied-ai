@@ -13,6 +13,7 @@ from classical_control.localise import (
     locate_can,
     locate_paper,
     paper_yaw,
+    pick_region_mask,
     yaw_to_quaternion,
 )
 from scipy.spatial.transform import Rotation
@@ -128,3 +129,19 @@ def test_shipped_chest_config_loads():
     assert (config.camera.width, config.camera.height) == (1920, 1080)
     assert config.parent_frame == "follower_body_link0"
     assert np.linalg.norm(config.rotation_xyzw) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_pick_region_mask_covers_inside_and_excludes_outside():
+    mask = pick_region_mask(
+        CAMERA, T_WORLD_OPTICAL, (0.25, -0.10), (0.45, 0.10), heights=(TABLE_Z,)
+    )
+    assert mask.shape == (CAMERA.height, CAMERA.width)
+    inside, outside = _world_to_pixels([[0.35, 0.0, TABLE_Z], [0.35, 0.30, TABLE_Z]])
+    assert mask[int(inside[1]), int(inside[0])] == 255
+    u, v = int(outside[0]), int(outside[1])
+    assert not (0 <= u < CAMERA.width and 0 <= v < CAMERA.height) or mask[v, u] == 0
+
+
+def test_pick_region_must_be_ordered():
+    with pytest.raises(ValueError, match="pick region"):
+        pick_region_mask(CAMERA, T_WORLD_OPTICAL, (0.4, 0.0), (0.2, 0.1), heights=(TABLE_Z,))

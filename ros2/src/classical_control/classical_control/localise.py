@@ -18,10 +18,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 import yaml
 
-from classical_control.camera_model import FisheyeCamera, pixel_to_world_on_plane
+from classical_control.camera_model import FisheyeCamera, pixel_to_world_on_plane, project_points
 
 
 @dataclass(frozen=True)
@@ -159,3 +160,57 @@ def paper_yaw(corners_xy: np.ndarray) -> float:
 def yaw_to_quaternion(yaw: float) -> tuple[float, float, float, float]:
     """Return the (x, y, z, w) quaternion for a rotation of ``yaw`` radians about z."""
     return (0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
+
+
+def pick_region_mask(
+    camera: FisheyeCamera,
+    T_world_optical: np.ndarray,
+    min_xy: Sequence[float],
+    max_xy: Sequence[float],
+    heights: Sequence[float],
+) -> np.ndarray:
+    """Mask the image pixels that see the pick region, so detection ignores everything else.
+
+    The region is a world-frame rectangle on the table. Its outline is projected at each
+    of `heights` (the paper on the table, the can's centre above it) and the mask is the
+    filled hull of those outlines, at the camera's resolution.
+
+    Args:
+        camera: Intrinsics at the detection resolution.
+        T_world_optical: Camera pose in world.
+        min_xy: Lower (x, y) corner of the region, metres.
+        max_xy: Upper (x, y) corner of the region, metres.
+        heights: Planes the objects sit on, metres.
+
+    Returns:
+        uint8 mask, 255 inside the region, shape (camera.height, camera.width).
+    """
+    (x0, y0), (x1, y1) = min_xy, max_xy
+    if not (x0 < x1 and y0 < y1):
+        raise ValueError(f"pick region min {min_xy} must be below max {max_xy}")
+    edge = np.linspace(0.0, 1.0, 25)
+    outline = np.concatenate(
+        [
+            np.stack([x0 + (x1 - x0) * edge, np.full_like(edge, y0)], axis=1),
+            np.stack([np.full_like(edge, x1), y0 + (y1 - y0) * edge], axis=1),
+            np.stack([x1 - (x1 - x0) * edge, np.full_like(edge, y1)], axis=1),
+            np.stack([np.full_like(edge, x0), y1 - (y1 - y0) * edge], axis=1),
+        ]
+    )
+    world = np.concatenate(
+        [
+            np.column_stack([outline, np.full(len(outline), z), np.ones(len(outline))])
+            for z in heights
+        ]
+    )
+    optical = (np.linalg.inv(T_world_optical) @ world.T).T[:, :3]
+    # Points behind the camera cannot be projected; the table is always in front of it.
+    optical = np.ascontiguousarray(optical[optical[:, 2] > 1e-6])
+    mask = np.zeros((camera.height, camera.width), np.uint8)
+    if len(optical) < 3:
+        return mask
+    pixels = project_points(camera, optical).astype(np.float32)
+    # tradeoff: the convex hull slightly over-covers the fisheye-curved outline; the region's
+    # margin to the arms (about 9 cm) dwarfs that.
+    cv2.fillConvexPoly(mask, cv2.convexHull(pixels).astype(np.int32), 255)
+    return mask

@@ -42,6 +42,15 @@
     # can's blob centroid is placed on the plane table_z + can_height / 2.
     can_height: 0.135
 
+    # Pick region: the world-frame table rectangle where the can and paper may be, as
+    # [x, y] in metres. Detection ignores the image outside it, because a moved arm differs
+    # from the background more than a can does and would otherwise be taken for it. It
+    # stays about 9 cm clear of the blobs the arms leave at home, which costs the demos'
+    # rightmost cans (y below -0.32): 95 of the 104 demo cans fall inside it. Objects placed
+    # outside it are not found.
+    pick_region_min_xy: [0.10, -0.32]
+    pick_region_max_xy: [0.45, 0.02]
+
     # Detector tuning, passed to classical_control.detector.DetectorParams. Sizes are
     # fractions of the image so they hold at any process resolution. Defaults were tuned
     # on chest-camera fixtures at 960x540.

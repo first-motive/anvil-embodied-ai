@@ -166,3 +166,23 @@ def test_real_background_against_itself_finds_nothing() -> None:
 
     assert detection.can_pixel is None
     assert detection.paper_center is None
+
+
+def test_region_keeps_a_bigger_blob_outside_it_from_being_the_can(scene) -> None:
+    # A moved arm changes more pixels than the can; the pick region must exclude it.
+    background, frame, _ = scene
+    _draw_can(frame)
+    height, width = frame.shape[:2]
+    arm = (width - 60, height // 2)
+    cv2.circle(frame, arm, 70, (30, 30, 30), cv2.FILLED)
+    assert detect(frame, background).can_pixel == pytest.approx(arm, abs=5.0)
+
+    region = np.zeros((height, width), np.uint8)
+    region[:, : width - 160] = 255
+    assert detect(frame, background, region=region).can_pixel == pytest.approx(CAN_CENTER, abs=3.0)
+
+
+def test_region_must_match_the_frame(scene) -> None:
+    background, frame, _ = scene
+    with pytest.raises(ValueError, match="region"):
+        detect(frame, background, region=np.zeros((10, 10), np.uint8))
