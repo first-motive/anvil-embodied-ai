@@ -25,6 +25,7 @@ setup(
     entry_points={
         "console_scripts": [
             "mine_episodes = classical_control.episode_miner:main",
+            "perception_node = classical_control.perception_node:main",
         ],
     },
 )

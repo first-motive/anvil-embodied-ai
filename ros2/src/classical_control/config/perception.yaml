@@ -1,0 +1,61 @@
+# ROS parameters for perception_node: chest-camera can and paper localisation.
+# Load with: ros2 run classical_control perception_node --ros-args --params-file <this file>
+/**:
+  ros__parameters:
+    # Path to the chest camera model (intrinsics + mounting). Empty means the copy
+    # installed with this package at share/classical_control/config/camera_chest.yaml.
+    camera_config_file: ""
+
+    # Empty-table reference image. Written by the /classical/capture_background service and
+    # loaded at startup when it exists. "~" is expanded. Saved at full camera resolution so
+    # it stays valid if process_width/process_height change.
+    background_file: "~/.ros/classical_control/chest_background.png"
+
+    # Resolution detection runs at, in pixels. Half of the camera's 1920x1080 cuts the
+    # detector cost about four-fold while the can and paper stay tens of pixels across.
+    # Keep the camera's 16:9 aspect, or the scaled intrinsics stop matching the image.
+    process_width: 960
+    process_height: 540
+
+    # How often a camera frame is decoded and run through the detector, in Hz. The camera
+    # sends ~60 Hz but the look-then-move task only needs a fresh pose before each move;
+    # decoding a 1080p JPEG and detecting costs tens of milliseconds, so running every
+    # frame would pin a CPU core for no benefit. 5 Hz keeps poses well inside the task
+    # node's freshness window.
+    process_rate_hz: 5.0
+
+    # How often the debug overlay is published on /classical/debug/compressed, in Hz.
+    # Kept low because it is a full JPEG encode meant for a human watching rqt.
+    debug_rate_hz: 1.0
+
+    # Frame the poses are published in. Must be z up with the table as a horizontal plane.
+    world_frame: world
+
+    # Name of the camera optical frame this node publishes as a static transform.
+    camera_frame: cam_chest_optical
+
+    # ESTIMATE: height of the table top in world_frame, in metres, measured in the test
+    # session. Must match table_z in task.yaml, or the arm reaches above or into the table.
+    table_z: 0.22
+
+    # ESTIMATE: height of an upright can, in metres. The can's blob centroid is placed on
+    # the plane table_z + can_height / 2.
+    can_height: 0.12
+
+    # Detector tuning, passed to classical_control.detector.DetectorParams. Sizes are
+    # fractions of the image so they hold at any process resolution. Defaults were tuned
+    # on chest-camera fixtures at 960x540.
+    detector:
+      blur_frac: 0.005                # Gaussian blur kernel, fraction of image width.
+      diff_threshold: 40              # Min per-channel |frame - background| (0-255) that counts as changed.
+      open_frac: 0.005                # Speckle-removing opening kernel, fraction of width.
+      close_frac: 0.015               # Blob-joining closing kernel, fraction of width.
+      table_color_distance: 20.0      # Max Lab distance from table colour to count as table.
+      table_lightness_weight: 0.4     # Lightness weight in that distance; <1 tolerates vignetting.
+      paper_max_saturation: 20        # Max HSV saturation (0-255) of a paper pixel.
+      paper_min_value: 190            # Min HSV value (0-255) of a paper pixel.
+      paper_min_area_frac: 0.002      # Smallest paper blob, fraction of image area.
+      paper_max_area_frac: 0.05       # Largest paper blob, fraction of image area.
+      paper_approx_epsilon: 0.04      # Polygon fit tolerance, fraction of paper perimeter.
+      paper_min_rectangularity: 0.85  # Min contour area / bounding-rectangle area for paper.
+      can_min_area_frac: 0.002        # Smallest can blob, fraction of image area.
