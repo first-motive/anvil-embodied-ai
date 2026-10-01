@@ -112,7 +112,7 @@ runs, and nothing otherwise.
 | `mine_episodes --recordings DIR --out-dir DIR` | Writes `mined_params.yaml` and `ground_truth.csv` (TCP at each gripper close and release) |
 | `eval_offline --recordings DIR --ground-truth CSV --camera-yaml YAML --out-dir DIR` | Detection rate and xy error against the demos, plus a PnP-fitted extrinsic |
 | `overlay_check --camera-yaml YAML` | Draws the live TCP and a table grid on one chest frame |
-| `calibrate_chest --camera-yaml YAML --task-params YAML --mined-params YAML` | Sweeps the arm with a hand marker and fits the chest camera; `--dry-run`, `--fit-only` |
+| `calibrate_chest --camera-yaml YAML --task-params YAML` | Sweeps the arm with a hand marker and fits the chest camera; `--dry-run`, `--fit-only` |
 
 ## Running On The Robot
 
@@ -171,12 +171,13 @@ marker on hand → arm sweeps ~15 poses → chest frame + measured TCP per pose
    gripper: that face points at the chest camera during grasps, and it does not move
    with the fingers. Keep the wrist-camera cable off it. Its exact position does not
    matter; the fit solves for it.
-2. Switch the loader to commanded EE (above) and run `mine` if
-   `data/classical/mined_params.yaml` does not exist yet; the sweep uses the demos'
-   grasp orientation.
+2. Switch the loader to commanded EE (above).
 3. `calibrate --dry-run --marker-id 1 --marker-size 0.04` (use the id and size you
    printed). It logs the sweep and checks every pose against the workspace box without
-   moving.
+   moving. The sweep keeps the home orientation, where the marker faces the chest
+   camera, tilted by at most `--max-tilt` (0.25 rad), with the TCP low and near home
+   (`--center 0.35 -0.15`, `--half-extent 0.05 0.05`, `--heights 0.42 0.47`). If views
+   miss the marker, look at `views/NN.jpg` and move the sweep with these options.
 4. Clear the table around the arm, keep the e-stop in hand, and run the same command
    without `--dry-run`. The arm visits each pose at 0.05 m/s, settles, and captures; it
    holds the gripper as it is and returns home after a complete sweep. An abort (e-stop,

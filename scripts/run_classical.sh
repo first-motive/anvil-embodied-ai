@@ -139,7 +139,6 @@ case "$VERB" in
         run_tool ros2 run classical_control calibrate_chest \
             --camera-yaml /workspace/config/camera_chest.yaml \
             --task-params /workspace/config/task.yaml \
-            --mined-params /data/mined_params.yaml \
             --out-dir /data/calibration "$@"
         ;;
     overlay)
