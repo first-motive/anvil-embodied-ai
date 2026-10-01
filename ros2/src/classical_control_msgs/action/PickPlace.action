@@ -1,0 +1,39 @@
+# Pick the can off the table and place it on the paper, once.
+
+# Goal
+# Log the planned waypoints and publish nothing to the arm.
+bool dry_run
+# Scales every segment's speed limit. 1.0 is the configured v_max; values are
+# clamped to (0, 1].
+float64 speed_scale
+---
+# Result
+int8 SUCCESS=0
+int8 NO_CAN=1
+int8 NO_PAPER=2
+int8 OUT_OF_WORKSPACE=3
+int8 GRASP_MISSED=4
+int8 HARDWARE_NOT_ACTIVE=5
+int8 STALE_POSE=6
+int8 CANCELLED=7
+
+int8 error_code
+# Poses the task localised against, in the world frame.
+geometry_msgs/PoseStamped can_pose
+geometry_msgs/PoseStamped paper_pose
+float64 duration_s
+---
+# Feedback
+uint8 LOCALISE=0
+uint8 PRE_GRASP=1
+uint8 DESCEND=2
+uint8 CLOSE=3
+uint8 LIFT=4
+uint8 TRANSIT=5
+uint8 LOWER=6
+uint8 OPEN=7
+uint8 RETREAT=8
+uint8 HOME=9
+uint8 HOLD=10
+
+uint8 phase
