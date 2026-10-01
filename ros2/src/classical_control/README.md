@@ -112,6 +112,7 @@ runs, and nothing otherwise.
 | `mine_episodes --recordings DIR --out-dir DIR` | Writes `mined_params.yaml` and `ground_truth.csv` (TCP at each gripper close and release) |
 | `eval_offline --recordings DIR --ground-truth CSV --camera-yaml YAML --out-dir DIR` | Detection rate and xy error against the demos, plus a PnP-fitted extrinsic |
 | `overlay_check --camera-yaml YAML` | Draws the live TCP and a table grid on one chest frame |
+| `calibrate_chest --camera-yaml YAML --task-params YAML --mined-params YAML` | Sweeps the arm with a hand marker and fits the chest camera; `--dry-run`, `--fit-only` |
 
 ## Running On The Robot
 
@@ -121,6 +122,7 @@ to `data/classical/`, which is gitignored.
 ```bash
 ./scripts/run_classical.sh build        # vendors anvil_msgs from the loader image, then builds
 ./scripts/run_classical.sh mine         # data/classical/mined_params.yaml + ground_truth.csv
+./scripts/run_classical.sh calibrate --marker-id 1 --marker-size 0.04   # see below
 ./scripts/run_classical.sh eval         # data/classical/eval/eval_report.yaml
 ./scripts/run_classical.sh up           # start both nodes
 ./scripts/run_classical.sh background   # with the table empty
@@ -152,20 +154,48 @@ then run `docker compose up -d` in `~/anvil-loader`. Set it back to
 
 ## Calibrating The Chest Camera
 
-`config/camera_chest.yaml` ships with estimates: a datasheet-style equidistant
-fisheye with f = 850 px and a placeholder mount. Replace both before trusting a pose.
-`world` and `follower_body_link0` are the same frame on this robot.
+`config/camera_chest.yaml` ships with estimates: an equidistant fisheye with
+f = 850 px and a placeholder mount. No published pose exists for this camera, so the
+arm calibrates it. An ArUco marker on the right hand gives known 3D points, and
+`calibrate_chest` fits the intrinsics, the camera pose in `world`, and the marker's
+offset on the hand in one solve. `world` and `follower_body_link0` are the same frame
+on this robot.
 
-1. Measure the camera position and orientation relative to `follower_body_link0`
-   and write them to `extrinsic`.
-2. Run `eval` and compare its xy error with the `fitted_extrinsic` block, which is
-   the PnP fit of detections to the demo ground truth and can be pasted into the yaml.
-3. Run `overlay` with the arm at five poses. The projected TCP should land within
-   about 10 px of the gripper.
-4. If it does not, the intrinsics are the problem: calibrate them with a checkerboard
-   (`cv2.fisheye.calibrate`) and repeat.
-5. Measure `table_z` and set it in both `perception.yaml` and `task.yaml`. Set
-   `can_xy_bias_m` from the eval's `suggested_can_xy_bias`.
+```
+marker on hand → arm sweeps ~15 poses → chest frame + measured TCP per pose
+              → joint fit → data/classical/calibration/camera_chest.yaml (candidate)
+```
+
+1. Print a `DICT_4X4_50` marker at 100% scale and measure its black square. Tape it
+   flat, with its white border, on the bracket that holds the wrist camera on the right
+   gripper: that face points at the chest camera during grasps, and it does not move
+   with the fingers. Keep the wrist-camera cable off it. Its exact position does not
+   matter; the fit solves for it.
+2. Switch the loader to commanded EE (above) and run `mine` if
+   `data/classical/mined_params.yaml` does not exist yet; the sweep uses the demos'
+   grasp orientation.
+3. `calibrate --dry-run --marker-id 1 --marker-size 0.04` (use the id and size you
+   printed). It logs the sweep and checks every pose against the workspace box without
+   moving.
+4. Clear the table around the arm, keep the e-stop in hand, and run the same command
+   without `--dry-run`. The arm visits each pose at 0.05 m/s, settles, and captures; it
+   holds the gripper as it is and returns home after a complete sweep. An abort (e-stop,
+   stale input, Ctrl-C) stops publishing instead, so the arm stays where it was; the
+   views captured so far are kept for `--fit-only`. The loader holds that last target,
+   so home the arm with `docker compose restart ros2` in `~/anvil-loader`.
+5. Read `data/classical/calibration/report.yaml`. Expect the marker in at least 12
+   views and a median corner error of 2 px or less. `views/NN.jpg` shows each capture.
+   `--fit-only` re-fits the saved views without moving the arm.
+6. Review the candidate `data/classical/calibration/camera_chest.yaml` and copy it to
+   `config/camera_chest.yaml`, then `down` and `up`.
+7. Run `overlay` with the arm at five poses. The projected TCP should land within about
+   10 px of the gripper.
+8. Measure `table_z` (base plate bottom to table top; the demos suggest about 0.28 m)
+   and set it in both `perception.yaml` and `task.yaml`. Run `eval` and set
+   `can_xy_bias_m` from its `suggested_can_xy_bias`.
+
+The fit holds the fisheye terms k3 and k4 at zero: the marker never reaches the image
+edges, so they cannot be measured, and left free they distort the rest of the image.
 
 ## Safety
 
