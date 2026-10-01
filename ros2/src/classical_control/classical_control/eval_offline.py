@@ -38,7 +38,12 @@ from scipy.spatial.transform import Rotation
 from classical_control.camera_model import FisheyeCamera, pose_to_matrix, project_points
 from classical_control.detector import DetectorParams, detect
 from classical_control.episode_miner import _bag_uri
-from classical_control.localise import ChestCameraConfig, locate_can, locate_paper
+from classical_control.localise import (
+    ChestCameraConfig,
+    locate_can,
+    locate_paper,
+    pick_region_mask,
+)
 
 CHEST_TOPIC = "/cam_chest/image_raw/compressed"
 _MEDIAN_BAND_ROWS = 32
@@ -401,6 +406,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--ransac-px", type=float, default=8.0, help="PnP inlier threshold")
     parser.add_argument(
+        "--pick-region",
+        type=float,
+        nargs=4,
+        default=(0.10, -0.32, 0.45, 0.02),
+        metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"),
+        help="detect only inside this world rectangle, as perception_node does, m",
+    )
+    parser.add_argument(
+        "--whole-image", action="store_true", help="ignore --pick-region and search everywhere"
+    )
+    parser.add_argument(
         "--save-background", type=Path, help="also write the median background jpg here"
     )
     add_parent_to_world_argument(parser)
@@ -444,12 +460,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     small_background = cv2.resize(background, small_size, interpolation=cv2.INTER_AREA)
     to_full = np.array([width / small_size[0], height / small_size[1]])
     params = DetectorParams()
+    region = None
+    if not args.whole_image:
+        region = pick_region_mask(
+            config.camera.scaled(*small_size),
+            T_world_optical,
+            args.pick_region[:2],
+            args.pick_region[2:],
+            heights=(args.table_z, args.table_z + args.can_height / 2.0),
+        )
 
     can_px = np.full((len(frames), 2), np.nan)
     paper_corners = np.full((len(frames), 4, 2), np.nan)
     for i, frame in enumerate(frames):
         small = cv2.resize(frame, small_size, interpolation=cv2.INTER_AREA)
-        detection = detect(small, small_background, params)
+        detection = detect(small, small_background, params, region)
         # Pixels go back to full resolution so every later step uses one camera model.
         if detection.can_pixel is not None:
             can_px[i] = np.asarray(detection.can_pixel) * to_full
@@ -473,6 +498,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "camera_yaml": str(args.camera_yaml),
             "image_size": [width, height],
             "detect_scale": args.scale,
+            "pick_region": None if args.whole_image else [float(v) for v in args.pick_region],
             "table_z": args.table_z,
             "can_height": args.can_height,
             "can_plane_z": can_plane_z,

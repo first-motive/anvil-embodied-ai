@@ -216,3 +216,14 @@ def test_non_finite_detection_is_refused_at_construction(config, limiter):
 def test_nan_speed_scale_is_refused():
     with pytest.raises(ValueError, match="NaN"):
         effective_speed_scale(float("nan"))
+
+
+def test_height_offset_moves_grasp_and_place_together():
+    mined = {
+        "grasp_z": {"median": 0.341},
+        "place_z": {"median": 0.344},
+        "grasp_orientation_xyzw": [0.0, 0.0, 0.0, 1.0],
+    }
+    grasp_z, place_z, _ = mined_targets(mined, -0.035)
+    assert grasp_z == pytest.approx(0.306)
+    assert place_z == pytest.approx(0.309)

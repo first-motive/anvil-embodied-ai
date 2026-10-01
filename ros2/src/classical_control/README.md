@@ -66,6 +66,9 @@ Only one goal runs at a time; a second is rejected.
 | `/classical/capture_background` | std_srvs/Trigger | Saves the latest frame as the empty-table reference |
 
 Nothing is published for a missing detection, so the task node sees a stale pose.
+Only the pick region is searched: an arm that has moved since the background was
+captured differs from it more than a can does, and would otherwise be taken for the can.
+Place the can and paper inside the blue outline in `/classical/debug/compressed`.
 
 | Parameter | Type | Default | Notes |
 |---|---|---|---|
@@ -77,6 +80,7 @@ Nothing is published for a missing detection, so the task node sees a stale pose
 | `world_frame`, `camera_frame` | string | `world`, `cam_chest_optical` | |
 | `table_z` | double | 0.207 | Measured; must match `task.yaml` |
 | `can_height` | double | 0.135 | Measured (demo can) |
+| `pick_region_min_xy`, `pick_region_max_xy` | double[2] | [0.10, −0.32], [0.45, 0.02] | World rectangle searched for the can and paper; outlined blue in the debug image |
 | `detector.*` | mixed | see `config/perception.yaml` | Thresholds, as fractions of image size |
 
 ### task_node
@@ -97,6 +101,7 @@ runs, and nothing otherwise.
 | `gripper_min_m`, `gripper_max_m` | double | 0.0, 0.05 | |
 | `v_max_mps`, `w_max_radps` | double | 0.10, 0.5 | Peak segment speeds before `speed_scale` |
 | `approach_height_m` | double | 0.08 | Clearance for pre-grasp, lift, transit and retreat |
+| `grasp_height_offset_m` | double | −0.035 | Added to the demos' grasp and place heights; grips below the can's neck |
 | `can_xy_bias_m` | double[2] | [0.0, 0.0] | Added to the detected can xy; take it from `eval_offline` |
 | `close_dwell_s`, `open_dwell_s` | double | 1.0, 0.8 | |
 | `gripper_open_m`, `gripper_closed_m`, `gripper_home_m` | double | 0.05, 0.0, 0.045 | |

@@ -49,6 +49,12 @@
     # the can top on the way in and the can bottom over the paper edge.
     approach_height_m: 0.08
 
+    # Added to the demos' grasp and place heights, in metres. The demos close at TCP z 0.341,
+    # level with the can top (0.207 + 0.135), where the can tapers into its neck; the first
+    # live trial squeezed the can out of the fingers there. 3.5 cm lower grips the straight
+    # body. Place moves with it, so the can still lands on the paper.
+    grasp_height_offset_m: -0.035
+
     # Offset (x, y) added to the detected can centre to get the TCP grasp xy, in metres.
     # Mined data puts TCP xy at close on the can xy, so zero until perception shows a bias.
     can_xy_bias_m: [0.0, 0.0]

@@ -9,7 +9,8 @@ node is the thin ROS shell around the pure modules that do the work:
   image of the empty table;
 * maps the detections onto the table with `localise` and publishes
   ``/classical/can_pose`` and ``/classical/paper_pose`` (PoseStamped in ``world``);
-* publishes a throttled debug overlay on ``/classical/debug/compressed``;
+* publishes a throttled debug overlay on ``/classical/debug/compressed``, with the pick
+  region outlined in blue;
 * serves ``/classical/capture_background`` (std_srvs/Trigger) to record the empty table.
 
 A pose is only published when its object is seen, so a stale stamp is how downstream
@@ -42,6 +43,7 @@ from classical_control.localise import (
     ChestCameraConfig,
     locate_can,
     locate_paper,
+    pick_region_mask,
     yaw_to_quaternion,
 )
 
@@ -71,6 +73,8 @@ class PerceptionNode(Node):
         self.declare_parameter("camera_frame", "cam_chest_optical")
         self.declare_parameter("table_z", 0.207)
         self.declare_parameter("can_height", 0.135)
+        self.declare_parameter("pick_region_min_xy", [0.10, -0.32])
+        self.declare_parameter("pick_region_max_xy", [0.45, 0.02])
         for field in dataclasses.fields(DetectorParams):
             self.declare_parameter(f"detector.{field.name}", field.default)
 
@@ -84,6 +88,12 @@ class PerceptionNode(Node):
         self._camera_frame: str = self._param("camera_frame")
         self._table_z: float = self._param("table_z")
         self._can_height: float = self._param("can_height")
+        self._pick_region = (
+            list(self._param("pick_region_min_xy")),
+            list(self._param("pick_region_max_xy")),
+        )
+        # Built from the first camera pose TF delivers; the camera is fixed, so it never changes.
+        self._region_mask: np.ndarray | None = None
         self._detector_params = DetectorParams.from_dict(
             {
                 field.name: self._param(f"detector.{field.name}")
@@ -184,7 +194,14 @@ class PerceptionNode(Node):
         if frame is None:
             return
         frame = self._to_process_size(frame)
-        detection = detect(frame, self._background, self._detector_params)
+        if self._region_mask is None:
+            self._region_mask = pick_region_mask(
+                self._camera,
+                T_world_optical,
+                *self._pick_region,
+                heights=(self._table_z, self._table_z + self._can_height / 2.0),
+            )
+        detection = detect(frame, self._background, self._detector_params, self._region_mask)
 
         stamp = msg.header.stamp
         if stamp.sec == 0 and stamp.nanosec == 0:
@@ -215,8 +232,13 @@ class PerceptionNode(Node):
         return frame
 
     def _publish_debug(self, msg: CompressedImage, frame: np.ndarray, detection: Detection) -> None:
-        """Publish the frame with the foreground, paper quad, and can centroid drawn on."""
+        """Publish the frame with the pick region, foreground, paper quad and can drawn on."""
         overlay = frame.copy()
+        if self._region_mask is not None:
+            region, _ = cv2.findContours(
+                self._region_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            cv2.drawContours(overlay, region, -1, (255, 128, 0), 1)
         contours, _ = cv2.findContours(detection.mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(overlay, contours, -1, (0, 255, 255), 1)
         if detection.paper_corners is not None:

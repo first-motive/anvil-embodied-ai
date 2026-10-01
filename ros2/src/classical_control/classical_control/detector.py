@@ -113,7 +113,10 @@ class Detection:
 
 
 def detect(
-    frame: np.ndarray, background: np.ndarray, params: DetectorParams | None = None
+    frame: np.ndarray,
+    background: np.ndarray,
+    params: DetectorParams | None = None,
+    region: np.ndarray | None = None,
 ) -> Detection:
     """Find the can and the paper in a frame by comparing it with the empty-table background.
 
@@ -121,15 +124,21 @@ def detect(
         frame: BGR uint8 image from the chest camera.
         background: BGR uint8 image of the empty table, same shape as `frame`.
         params: Tuning; defaults to `DetectorParams()`.
+        region: Optional uint8 mask, same height and width as `frame`; only pixels where it
+            is non-zero can belong to the can or the paper. A moved arm differs from the
+            background far more than a can does, so without it the arm can win.
 
     Returns:
         The detection. Either object may be missing.
 
     Raises:
-        ValueError: If `frame` and `background` differ in shape.
+        ValueError: If `frame` and `background` differ in shape, or `region` does not
+            match them.
     """
     if frame.shape != background.shape:
         raise ValueError(f"frame shape {frame.shape} != background shape {background.shape}")
+    if region is not None and region.shape != frame.shape[:2]:
+        raise ValueError(f"region shape {region.shape} != frame size {frame.shape[:2]}")
     params = params or DetectorParams()
     height, width = frame.shape[:2]
     image_area = height * width
@@ -140,6 +149,8 @@ def detect(
     # tradeoff: the table mask is rebuilt every call, which is a few milliseconds at 1080p;
     # cache it per background if the detector ever runs at frame rate.
     table = _table_mask(background, params, blur, open_kernel)
+    if region is not None:
+        table &= region > 0
 
     frame_blurred = cv2.GaussianBlur(frame, (blur, blur), 0)
     background_blurred = cv2.GaussianBlur(background, (blur, blur), 0)
