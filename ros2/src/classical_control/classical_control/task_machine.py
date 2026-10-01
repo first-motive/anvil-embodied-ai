@@ -128,16 +128,25 @@ class Step:
     dwell_s: float = 0.0
 
 
-def mined_targets(mined: Mapping[str, Any]) -> tuple[float, float, tuple[float, ...]]:
+def mined_targets(
+    mined: Mapping[str, Any], height_offset_m: float = 0.0
+) -> tuple[float, float, tuple[float, ...]]:
     """Pull grasp height, place height and grasp orientation out of `mined_params.yaml`.
 
     Medians, not means: one sloppy demonstration should not move the grasp.
+
+    Args:
+        mined: The parsed file.
+        height_offset_m: Added to both heights. Grasp and place move together, so the can
+            hangs the same distance below the fingers and still lands on the paper.
 
     Raises:
         KeyError: If the file has no place statistics (no episode released the can).
     """
     quat = tuple(float(v) for v in mined["grasp_orientation_xyzw"])
-    return float(mined["grasp_z"]["median"]), float(mined["place_z"]["median"]), quat
+    grasp_z = float(mined["grasp_z"]["median"]) + height_offset_m
+    place_z = float(mined["place_z"]["median"]) + height_offset_m
+    return grasp_z, place_z, quat
 
 
 def effective_speed_scale(speed_scale: float) -> float:

@@ -81,6 +81,7 @@ PARAMETER_DEFAULTS = {
     "v_max_mps": 0.10,
     "w_max_radps": 0.5,
     "approach_height_m": 0.08,
+    "grasp_height_offset_m": -0.035,
     "can_xy_bias_m": [0.0, 0.0],
     "close_dwell_s": 1.0,
     "open_dwell_s": 0.8,
@@ -173,7 +174,10 @@ class PickPlaceNode(Node):
         path = param["mined_params_file"]
         if not path:
             raise ValueError("mined_params_file is required (path to mined_params.yaml)")
-        grasp_z, place_z, quat = mined_targets(yaml.safe_load(Path(path).expanduser().read_text()))
+        grasp_z, place_z, quat = mined_targets(
+            yaml.safe_load(Path(path).expanduser().read_text()),
+            float(param["grasp_height_offset_m"]),
+        )
         return TaskConfig(
             grasp_z_m=grasp_z,
             place_z_m=place_z,
