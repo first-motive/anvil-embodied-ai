@@ -27,6 +27,8 @@ setup(
             "mine_episodes = classical_control.episode_miner:main",
             "perception_node = classical_control.perception_node:main",
             "task_node = classical_control.task_node:main",
+            "eval_offline = classical_control.eval_offline:main",
+            "overlay_check = classical_control.overlay_check:main",
         ],
     },
 )
