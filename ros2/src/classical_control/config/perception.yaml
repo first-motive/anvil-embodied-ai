@@ -66,5 +66,5 @@
       paper_min_area_frac: 0.002      # Smallest paper blob, fraction of image area.
       paper_max_area_frac: 0.05       # Largest paper blob, fraction of image area.
       paper_approx_epsilon: 0.04      # Polygon fit tolerance, fraction of paper perimeter.
-      paper_min_rectangularity: 0.85  # Min contour area / bounding-rectangle area for paper.
+      paper_min_rectangularity: 0.80  # Min contour area / bounding-rectangle area; a curled sheet scores ~0.84.
       can_min_area_frac: 0.002        # Smallest can blob, fraction of image area.
