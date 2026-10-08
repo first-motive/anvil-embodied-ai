@@ -59,6 +59,18 @@
     # Mined data puts TCP xy at close on the can xy, so zero until perception shows a bias.
     can_xy_bias_m: [0.0, 0.0]
 
+    # --- Goal overrides (collection loop) ---
+
+    # Largest |grasp_dz| a goal may add to grasp and place height, in metres.
+    max_grasp_dz_m: 0.02
+    # Largest |yaw_offset| a goal may add to the grasp orientation about world z, in radians.
+    # 0.35 rad (20 degrees) stays near the demonstrated orientation the IK is known to reach.
+    max_yaw_offset_rad: 0.35
+    # Largest finger closure a goal may command, in metres. An empty close reads about the
+    # closure, so a miss is closure + grasp_missed_threshold_m; a held can reads ~0.0185, and
+    # this cap keeps 0.010 + 0.008 below it so a good grasp never counts as missed.
+    max_closure_m: 0.010
+
     # --- Gripper ---
 
     # Time given to the fingers to close before the grasp check, in seconds.
@@ -72,7 +84,8 @@
     gripper_home_m: 0.045
 
     # Finger position after the close dwell below which the grasp counts as missed. Measured:
-    # closed on the can reads ~0.0185, an empty close ~0.0.
+    # closed on the can reads ~0.0185, an empty close ~0.0. A goal's closure_width moves an
+    # empty close up to that width, so the check becomes closure_width + this threshold.
     grasp_missed_threshold_m: 0.008
 
     # --- Home ---

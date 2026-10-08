@@ -9,6 +9,11 @@ targets and streams them one sample per control tick:
 A cancel or a fault in any phase drops into HOLD, which re-commands the last
 pose sent and stops there, and the run ends with that error code.
 
+A goal may override the place point, grasp height, finger closure and grasp
+yaw (`GoalOverrides`) so an unattended collection loop can vary its episodes,
+or ask only to go HOME (`PickPlaceTask.home_only`). Every override at its
+default reproduces the plain pick and place.
+
 It is pure (no ROS, no threads, time is passed in) so the whole sequence is
 unit-tested off the robot; `task_node` only feeds it measurements and publishes
 what it returns. Three robot facts shape it:
@@ -33,8 +38,9 @@ from enum import IntEnum
 from typing import Any
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
-from .safety import SafetyLimiter
+from .safety import SafetyLimiter, SafetyLimits
 from .trajectory import Pose, plan_segment
 
 #: Smallest speed scale honoured, so a typo cannot stall the arm mid-air for minutes.
@@ -90,7 +96,8 @@ class TaskConfig:
         gripper_open_m: Finger position commanded open.
         gripper_closed_m: Finger position commanded closed.
         gripper_home_m: Finger position commanded on the way home.
-        grasp_missed_threshold_m: Finger position below which a close is empty.
+        grasp_missed_threshold_m: Finger position below which a close is empty. With a
+            goal's closure override it is measured above that closure instead of zero.
     """
 
     grasp_z_m: float
@@ -126,6 +133,90 @@ class Step:
     target: Pose
     gripper: float
     dwell_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class GoalOverrides:
+    """Per-goal changes to the planned grasp, already clamped by `goal_overrides`.
+
+    Attributes:
+        grasp_dz_m: Added to both grasp and place height, so the can still hangs
+            the same distance below the fingers and lands on the table.
+        closure_m: Finger position commanded at CLOSE, or None for the configured
+            `gripper_closed_m`.
+        yaw_offset_rad: Rotation about world z applied to the grasp orientation
+            from pre-grasp to retreat; HOME keeps its own orientation.
+    """
+
+    grasp_dz_m: float = 0.0
+    closure_m: float | None = None
+    yaw_offset_rad: float = 0.0
+
+
+def goal_overrides(
+    grasp_dz: float,
+    closure_width: float,
+    yaw_offset: float,
+    *,
+    max_grasp_dz_m: float,
+    max_yaw_offset_rad: float,
+    gripper_range_m: tuple[float, float],
+    max_closure_m: float,
+) -> GoalOverrides:
+    """Clamp a goal's raw override fields into `GoalOverrides`.
+
+    Args:
+        grasp_dz: Requested height change in metres; clamped to ±max_grasp_dz_m.
+        closure_width: Requested finger closure in metres. Non-positive is the
+            message default and means the configured closure; otherwise clamped
+            into `gripper_range_m`, the limiter's (min, max), and capped at
+            `max_closure_m`. An empty close reads about the closure, so the missed
+            check fires below closure + threshold; the cap keeps that under what a
+            held can reads, or every good grasp would count as missed.
+        yaw_offset: Requested yaw in radians; clamped to ±max_yaw_offset_rad.
+
+    Raises:
+        ValueError: If any field is NaN; np.clip would pass it through.
+    """
+    if any(math.isnan(v) for v in (grasp_dz, closure_width, yaw_offset)):
+        raise ValueError("goal overrides must not be NaN")
+    closure = None
+    if closure_width > 0.0:
+        low, high = gripper_range_m
+        closure = float(np.clip(closure_width, low, min(high, max_closure_m)))
+    return GoalOverrides(
+        grasp_dz_m=float(np.clip(grasp_dz, -max_grasp_dz_m, max_grasp_dz_m)),
+        closure_m=closure,
+        yaw_offset_rad=float(np.clip(yaw_offset, -max_yaw_offset_rad, max_yaw_offset_rad)),
+    )
+
+
+def place_target_in_workspace(
+    limits: SafetyLimits, target: Sequence[float]
+) -> tuple[float, float, float]:
+    """Clamp a requested place point's xy into the workspace box.
+
+    Only xy is used by the planner (heights come from the demonstrations), so z
+    is passed through. The all-waypoints workspace check still runs afterwards.
+
+    Raises:
+        ValueError: If the target is not finite.
+    """
+    x, y, z = (float(v) for v in target)
+    if not np.isfinite([x, y, z]).all():
+        raise ValueError("place target must be finite")
+    lower, upper = limits.workspace_min_m, limits.workspace_max_m
+    return float(np.clip(x, lower[0], upper[0])), float(np.clip(y, lower[1], upper[1])), z
+
+
+def required_detections(*, home_only: bool, place_target_set: bool) -> tuple[str, ...]:
+    """The detections a goal needs fresh before it may start: "can" and/or "paper".
+
+    A goal with its own place target needs no paper; a home-only goal needs neither.
+    """
+    if home_only:
+        return ()
+    return ("can",) if place_target_set else ("can", "paper")
 
 
 def mined_targets(
@@ -167,24 +258,40 @@ def effective_speed_scale(speed_scale: float) -> float:
 
 
 def plan_steps(
-    config: TaskConfig, can_position: Sequence[float], paper_position: Sequence[float]
+    config: TaskConfig,
+    can_position: Sequence[float],
+    place_position: Sequence[float],
+    overrides: GoalOverrides = GoalOverrides(),
 ) -> list[Step]:
-    """Build the waypoint sequence from the detected can and paper centres.
+    """Build the waypoint sequence from the can centre and the place point.
 
-    Only xy is taken from the detections: heights come from the demonstrations,
+    Only xy is taken from the positions: heights come from the demonstrations,
     which saw where the TCP actually was when the fingers closed and opened.
+
+    Args:
+        config: Run settings.
+        can_position: Detected can centre in the world frame.
+        place_position: Detected paper centre, or a goal's place target.
+        overrides: Per-goal grasp changes; the default changes nothing.
     """
     quat = config.grasp_orientation_xyzw
+    if overrides.yaw_offset_rad != 0.0:
+        # Left-multiplied, so the turn is about world z, not the tilted tool axis.
+        rotation = Rotation.from_euler("z", overrides.yaw_offset_rad) * Rotation.from_quat(quat)
+        quat = tuple(rotation.as_quat())
     grasp_xy = np.asarray(can_position, dtype=np.float64)[:2] + np.asarray(config.can_xy_bias_m)
-    place_xy = np.asarray(paper_position, dtype=np.float64)[:2]
+    place_xy = np.asarray(place_position, dtype=np.float64)[:2]
     above = config.approach_height_m
+    grasp_z = config.grasp_z_m + overrides.grasp_dz_m
+    place_z = config.place_z_m + overrides.grasp_dz_m
 
-    grasp = Pose([*grasp_xy, config.grasp_z_m], quat)
-    pre_grasp = Pose([*grasp_xy, config.grasp_z_m + above], quat)
-    place = Pose([*place_xy, config.place_z_m], quat)
-    above_place = Pose([*place_xy, config.place_z_m + above], quat)
+    grasp = Pose([*grasp_xy, grasp_z], quat)
+    pre_grasp = Pose([*grasp_xy, grasp_z + above], quat)
+    place = Pose([*place_xy, place_z], quat)
+    above_place = Pose([*place_xy, place_z + above], quat)
 
-    opened, closed = config.gripper_open_m, config.gripper_closed_m
+    opened = config.gripper_open_m
+    closed = config.gripper_closed_m if overrides.closure_m is None else overrides.closure_m
     return [
         Step(Phase.PRE_GRASP, pre_grasp, opened),
         Step(Phase.DESCEND, grasp, opened),
@@ -215,13 +322,49 @@ class PickPlaceTask:
         config: TaskConfig,
         limiter: SafetyLimiter,
         can_position: Sequence[float],
-        paper_position: Sequence[float],
+        place_position: Sequence[float],
         *,
+        overrides: GoalOverrides = GoalOverrides(),
         speed_scale: float = 1.0,
         dry_run: bool = False,
     ) -> None:
+        steps = plan_steps(config, can_position, place_position, overrides)
+        # An empty close reads about the commanded closure, not zero, so the
+        # missed check is measured from it. None keeps the configured threshold as is.
+        missed_below = config.grasp_missed_threshold_m + (overrides.closure_m or 0.0)
+        self._setup(config, limiter, steps, missed_below, speed_scale, dry_run)
+
+    @classmethod
+    def home_only(
+        cls,
+        config: TaskConfig,
+        limiter: SafetyLimiter,
+        *,
+        speed_scale: float = 1.0,
+        dry_run: bool = False,
+    ) -> PickPlaceTask:
+        """Build a task that only moves HOME with the gripper at `gripper_home_m`.
+
+        Used to recover the arm after a failed or stopped run; it needs no can or
+        paper and has no CLOSE, so it never reports GRASP_MISSED.
+        """
+        task = cls.__new__(cls)
+        steps = [Step(Phase.HOME, config.home, config.gripper_home_m)]
+        task._setup(config, limiter, steps, config.grasp_missed_threshold_m, speed_scale, dry_run)
+        return task
+
+    def _setup(
+        self,
+        config: TaskConfig,
+        limiter: SafetyLimiter,
+        steps: list[Step],
+        missed_below_m: float,
+        speed_scale: float,
+        dry_run: bool,
+    ) -> None:
         self._config = config
-        self._steps = plan_steps(config, can_position, paper_position)
+        self._steps = steps
+        self._missed_below_m = missed_below_m
         scale = effective_speed_scale(speed_scale)
         self._v_max = config.v_max_mps * scale
         self._w_max = config.w_max_radps * scale
@@ -305,7 +448,7 @@ class PickPlaceTask:
                 if now - self._dwell_started < step.dwell_s:
                     self._last = Command(step.target, step.gripper)
                     return self._last
-                if step.phase is Phase.CLOSE and finger < self._config.grasp_missed_threshold_m:
+                if step.phase is Phase.CLOSE and finger < self._missed_below_m:
                     return self._finish(ErrorCode.GRASP_MISSED, hold=True)
             if not self._advance():
                 return self._finish(ErrorCode.SUCCESS, hold=False)

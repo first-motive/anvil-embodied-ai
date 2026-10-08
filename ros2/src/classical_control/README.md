@@ -35,7 +35,11 @@ cancel, stale input or hardware stop in any phase → HOLD the last command → 
 - Every waypoint is checked against the workspace box before anything moves.
 - After CLOSE, a finger position below `grasp_missed_threshold_m` means the gripper
   closed on nothing: the task ends with `GRASP_MISSED`. A can holds the fingers near
-  0.0185 m; an empty close reads near 0.
+  0.0185 m; an empty close reads near 0. With a goal `closure_width` an empty close
+  reads near that width, so the check is `closure_width + grasp_missed_threshold_m`.
+- A goal with `place_target_set` places at its xy instead of on the paper and needs
+  no paper detection. A `home_only` goal skips LOCALISE's can and paper checks and
+  runs HOME alone with the gripper at `gripper_home_m`.
 - HOME is a commanded pose, not `/arms_resetter/reset`, which hands control back to
   the latched target and snaps the arm back.
 
@@ -47,12 +51,18 @@ cancel, stale input or hardware stop in any phase → HOLD the last command → 
 |---|---|---|
 | Goal `dry_run` | bool | Plan and log the waypoints; publish nothing to the arm |
 | Goal `speed_scale` | float64 | Scales `v_max_mps` and `w_max_radps`. Clamped to [0.1, 1]; 0 (the default) runs at full configured speed; NaN is rejected |
+| Goal `place_target_set`, `place_target` | bool, Point | Place at this `world` xy instead of on the paper; skips the paper checks. xy clamped into the workspace box |
+| Goal `grasp_dz` | float64 | Metres added to grasp and place height. Clamped to ±`max_grasp_dz_m` |
+| Goal `closure_width` | float64 | Finger position commanded at CLOSE. 0 (the default) uses `gripper_closed_m`; otherwise clamped to [`gripper_min_m`, `max_closure_m`] |
+| Goal `yaw_offset` | float64 | Radians about world z added to the grasp orientation, pre-grasp to retreat. Clamped to ±`max_yaw_offset_rad` |
+| Goal `home_only` | bool | Move HOME with the gripper at `gripper_home_m` and stop; needs no can or paper |
 | Feedback `phase` | uint8 | Current phase, `LOCALISE` (0) to `HOME` (9), `HOLD` (10) |
 | Result `error_code` | int8 | `SUCCESS`, `NO_CAN`, `NO_PAPER`, `OUT_OF_WORKSPACE`, `GRASP_MISSED`, `HARDWARE_NOT_ACTIVE`, `STALE_POSE`, `CANCELLED` |
 | Result `can_pose`, `paper_pose` | PoseStamped | The detections the task used, in `world` |
 | Result `duration_s` | float64 | Wall time from goal to result |
 
-Only one goal runs at a time; a second is rejected.
+Every new goal field at its default reproduces the plain pick and place. A non-finite
+(NaN or inf) float field rejects the goal. Only one goal runs at a time; a second is rejected.
 
 ### perception_node
 
@@ -103,6 +113,7 @@ runs, and nothing otherwise.
 | `approach_height_m` | double | 0.08 | Clearance for pre-grasp, lift, transit and retreat |
 | `grasp_height_offset_m` | double | −0.035 | Added to the demos' grasp and place heights; grips below the can's neck |
 | `can_xy_bias_m` | double[2] | [0.0, 0.0] | Added to the detected can xy; take it from `eval_offline` |
+| `max_grasp_dz_m`, `max_yaw_offset_rad`, `max_closure_m` | double | 0.02, 0.35, 0.010 | Clamp limits for a goal's `grasp_dz`, `yaw_offset` and `closure_width` |
 | `close_dwell_s`, `open_dwell_s` | double | 1.0, 0.8 | |
 | `gripper_open_m`, `gripper_closed_m`, `gripper_home_m` | double | 0.05, 0.0, 0.045 | |
 | `grasp_missed_threshold_m` | double | 0.008 | |
