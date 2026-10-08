@@ -1,0 +1,45 @@
+# Unattended collection loop: what each episode records and when a run stops for disk.
+# Read by the collection node through classical_control.recorder.load_recording_config.
+# This is a plain yaml file, not a ROS parameter file.
+#
+# Each cycle is one episode, recorded by `ros2 bag record` into <run>/NNNN/NNNN_0.mcap,
+# the same layout the loader writes, so existing tooling reads collected episodes as-is.
+
+recording:
+  # Topics recorded by exact name: every topic the loader records, plus the classical
+  # baseline's detections so a failed cycle can be diagnosed from its own bag.
+  topics:
+    - /joint_states                                      # arm and gripper joint positions
+    - /ee_pose_right                                     # measured right TCP pose
+    - /commanded_ee_right                                # TCP target streamed by task_node
+    - /cam_chest/image_raw/compressed                    # chest camera, JPEG
+    - /cam_waist/image_raw/compressed                    # waist camera, JPEG
+    - /cam_wrist_r/image_raw/compressed                  # right wrist camera, JPEG
+    - /follower_r_forward_position_controller/commands   # joint commands sent to the arm
+    - /hardware_state_controller/state                   # active / pause / estop
+    - /tf                                                # dynamic transforms
+    - /tf_static                                         # fixed transforms, latched
+    - /classical/can_pose                                # perception's can detection
+    - /classical/paper_pose                              # perception's paper detection
+
+  # Topics recorded by pattern, added to the list above: the four FlexiTac tactile topics.
+  # A regex because their exact names are confirmed on the robot at the first attended run.
+  # ros2 bag can only subscribe if the tactile message package's typesupport is installed
+  # in the container; also checked at the first attended run (G1). Empty disables it.
+  topic_regex: "^/gripper/tactile/.*"
+
+  # rosbag2 storage plugin. mcap matches the loader's episodes.
+  storage: mcap
+
+  # Time allowed after SIGINT for the recorder to flush and write the MCAP index before it
+  # is killed, in seconds. A killed recorder leaves a bag without a summary section.
+  stop_timeout_s: 10.0
+
+  # Wait after starting the recorder before the cycle starts, in seconds, so DDS discovery
+  # has matched every publisher and the first motion is in the bag.
+  settle_s: 2.0
+
+disk_guard:
+  # Free space below which the run stops before starting the next cycle, in gigabytes
+  # (10^9 bytes). Checked on the run directory's filesystem.
+  min_free_gb: 50
