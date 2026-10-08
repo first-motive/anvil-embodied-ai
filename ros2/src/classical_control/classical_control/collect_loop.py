@@ -10,7 +10,7 @@ recorded as one MCAP episode in the loader's layout (`0001/0001_0.mcap` plus a
 This module holds everything the loop decides, with no ROS, no threads and no
 clock: knob sampling takes an injected `numpy.random.Generator`, the stop policy
 is told the time and free disk space, and the metadata helpers return plain
-dicts. A thin node feeds it and does the I/O, so every stop rule is unit-tested
+dicts. `load_loop_config` reads the loop's settings from yaml. A thin node feeds it and does the I/O, so every stop rule is unit-tested
 off the robot.
 """
 
@@ -20,9 +20,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import yaml
 
 from .task_machine import ErrorCode
 
@@ -339,6 +341,31 @@ class StopPolicy:
         return now - self.started_at
 
 
+def forced_stop_reason(
+    code: ErrorCode | None, *, recorder_died: bool, stop_requested: bool
+) -> str | None:
+    """A stop the attempt's outcome forces before the policy sees its code, or None.
+
+    - No result at all: the task node's state is unknown, so nothing more is sent.
+    - CANCELLED without a stop request: the loop cancelled a goal that ran too long, which
+      the policy would otherwise read as the operator stopping the run.
+    - A recorder that died early: the bag is the point of the run, so an episode without
+      one is not worth the wear.
+
+    Args:
+        code: The attempt's result, or None if the goal was rejected or never ended.
+        recorder_died: The episode's recorder exited before it was stopped.
+        stop_requested: The operator asked the run to stop.
+    """
+    if code is None:
+        return OPERATOR_STOP if stop_requested else "error:NO_RESULT"
+    if code == ErrorCode.CANCELLED and not stop_requested:
+        return "error:GOAL_TIMEOUT"
+    if recorder_died:
+        return "error:RECORDER"
+    return None
+
+
 def run_id(now_utc: datetime) -> str:
     """Name a run by its UTC start time, e.g. `20261008T142301Z`.
 
@@ -472,3 +499,71 @@ def summary_metadata(
         "duration_s": round(policy.elapsed_s(now), 3),
         "ended_at": ended_at,
     }
+
+
+_LOOP_KEYS = {
+    "edge_margin_m",
+    "min_place_distance_m",
+    "max_grasp_retries",
+    "max_consecutive_failures",
+    "can_pose_timeout_s",
+    "goal_timeout_s",
+}
+
+
+@dataclass(frozen=True)
+class LoopConfig:
+    """The loop's own settings, from the `loop` section of `config/collect.yaml`.
+
+    Attributes:
+        region: Where cans are placed: perception's pick region with the loop's margins.
+        max_grasp_retries: See `StopLimits`.
+        max_consecutive_failures: See `StopLimits`.
+        can_pose_timeout_s: Wait for a fresh can detection before a cycle.
+        goal_timeout_s: Longest one PickPlace goal may run before it is cancelled.
+    """
+
+    region: PlaceRegion
+    max_grasp_retries: int
+    max_consecutive_failures: int
+    can_pose_timeout_s: float
+    goal_timeout_s: float
+
+    def __post_init__(self) -> None:
+        if self.can_pose_timeout_s <= 0.0 or self.goal_timeout_s <= 0.0:
+            raise ValueError("loop timeouts must be positive")
+
+
+def load_loop_config(collect_path: str | Path, perception_path: str | Path) -> LoopConfig:
+    """Read the loop settings, taking the pick region from perception's parameter file.
+
+    The region is read rather than repeated, so the loop never places a can where the
+    detector does not look.
+
+    Raises:
+        ValueError: If the loop section is missing or has unknown keys.
+    """
+    loop = (yaml.safe_load(Path(collect_path).read_text()) or {}).get("loop")
+    if not isinstance(loop, Mapping):
+        raise ValueError(f"{collect_path} has no loop section")
+    unknown = set(loop) - _LOOP_KEYS
+    if unknown:
+        raise ValueError(f"unknown loop keys: {sorted(unknown)}")
+    try:
+        perception = yaml.safe_load(Path(perception_path).read_text())["/**"]["ros__parameters"]
+        region_xy = perception["pick_region_min_xy"], perception["pick_region_max_xy"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"{perception_path} has no pick region: {error}") from error
+    region = PlaceRegion(
+        min_xy=tuple(float(v) for v in region_xy[0]),
+        max_xy=tuple(float(v) for v in region_xy[1]),
+        edge_margin_m=float(loop["edge_margin_m"]),
+        min_place_distance_m=float(loop["min_place_distance_m"]),
+    )
+    return LoopConfig(
+        region=region,
+        max_grasp_retries=int(loop["max_grasp_retries"]),
+        max_consecutive_failures=int(loop["max_consecutive_failures"]),
+        can_pose_timeout_s=float(loop["can_pose_timeout_s"]),
+        goal_timeout_s=float(loop["goal_timeout_s"]),
+    )

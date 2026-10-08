@@ -7,6 +7,10 @@ services:
       context: .
       dockerfile: docker/classical/Dockerfile
     container_name: classical-control
+    # A stop is a Ctrl-C, and the grace period covers the collection loop's cancel, HOME
+    # move and summary, so `docker stop` never kills the arm mid-motion.
+    stop_signal: SIGINT
+    stop_grace_period: 3m
     network_mode: host
     ipc: host
     environment:
@@ -16,7 +20,8 @@ services:
     volumes:
       # The 104 teleop demos the miner and offline eval read. Never written.
       - ${RECORDINGS_DIR:-${HOME}/anvil-loader/data/recordings/pick-and-place-can}:/recordings:ro
-      # Run-time outputs: mined params, background, eval reports, overlays, trials.csv.
+      # Run-time outputs: mined params, background, eval reports, overlays, trials.csv, and
+      # the collection loop's episodes under collect/, so it must stay read-write.
       - ./data/classical:/data
       # Repo config, so a calibration edit applies on restart without a rebuild.
       - ./ros2/src/classical_control/config:/workspace/config:ro

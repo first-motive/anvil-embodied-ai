@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -16,7 +17,9 @@ from classical_control.collect_loop import (
     StopPolicy,
     episode_metadata,
     episode_name,
+    forced_stop_reason,
     iso_utc,
+    load_loop_config,
     run_id,
     run_metadata,
     sample_knobs,
@@ -336,3 +339,76 @@ def test_summary_reports_counters_and_reason():
 def test_negative_stop_limits_are_refused(kwargs):
     with pytest.raises(ValueError):
         StopLimits(**kwargs)
+
+
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+
+
+def test_shipped_loop_config_uses_perceptions_pick_region():
+    loop = load_loop_config(CONFIG_DIR / "collect.yaml", CONFIG_DIR / "perception.yaml")
+    assert loop.region.min_xy == (0.10, -0.32)
+    assert loop.region.max_xy == (0.45, 0.02)
+    assert loop.max_grasp_retries == 2
+    # The shipped margins must leave room to place a can away from any can position.
+    rng = np.random.default_rng(0)
+    for can_xy in [(0.10, -0.32), (0.275, -0.15), (0.45, 0.02)]:
+        sample_place_xy(rng, loop.region, can_xy)
+
+
+def test_unknown_loop_key_is_refused(tmp_path):
+    collect = tmp_path / "collect.yaml"
+    collect.write_text("loop:\n  edge_margin: 0.05\n")
+    with pytest.raises(ValueError, match="unknown loop keys"):
+        load_loop_config(collect, CONFIG_DIR / "perception.yaml")
+
+
+def test_missing_loop_section_is_refused(tmp_path):
+    collect = tmp_path / "collect.yaml"
+    collect.write_text("recording: {}\n")
+    with pytest.raises(ValueError, match="no loop section"):
+        load_loop_config(collect, CONFIG_DIR / "perception.yaml")
+
+
+@pytest.mark.parametrize(
+    ("code", "recorder_died", "stop_requested", "reason"),
+    [
+        (None, False, True, "operator"),
+        (None, False, False, "error:NO_RESULT"),
+        (ErrorCode.CANCELLED, False, False, "error:GOAL_TIMEOUT"),
+        (ErrorCode.CANCELLED, False, True, None),
+        (ErrorCode.SUCCESS, True, False, "error:RECORDER"),
+        (ErrorCode.GRASP_MISSED, False, False, None),
+        (ErrorCode.SUCCESS, False, False, None),
+    ],
+)
+def test_forced_stop_reason(code, recorder_died, stop_requested, reason):
+    assert (
+        forced_stop_reason(code, recorder_died=recorder_died, stop_requested=stop_requested)
+        == reason
+    )
+
+
+def test_timed_out_goal_stops_as_a_timeout_not_the_operator():
+    policy = StopPolicy(StopLimits(), started_at=0.0)
+    policy.request_stop(
+        forced_stop_reason(ErrorCode.CANCELLED, recorder_died=False, stop_requested=False)
+    )
+    assert policy.after_attempt(ErrorCode.CANCELLED) is Decision.STOP
+    assert policy.stop_reason == "error:GOAL_TIMEOUT"
+
+
+def test_non_positive_loop_timeouts_are_refused(tmp_path):
+    collect = tmp_path / "collect.yaml"
+    collect.write_text(
+        "loop:\n  edge_margin_m: 0.05\n  min_place_distance_m: 0.08\n  max_grasp_retries: 2\n"
+        "  max_consecutive_failures: 3\n  can_pose_timeout_s: 0\n  goal_timeout_s: 300\n"
+    )
+    with pytest.raises(ValueError, match="timeouts"):
+        load_loop_config(collect, CONFIG_DIR / "perception.yaml")
+
+
+def test_perception_file_without_pick_region_is_refused(tmp_path):
+    perception = tmp_path / "perception.yaml"
+    perception.write_text("/**:\n  ros__parameters: {}\n")
+    with pytest.raises(ValueError, match="pick region"):
+        load_loop_config(CONFIG_DIR / "collect.yaml", perception)

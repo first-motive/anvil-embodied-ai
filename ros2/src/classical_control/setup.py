@@ -31,6 +31,7 @@ setup(
             "eval_offline = classical_control.eval_offline:main",
             "overlay_check = classical_control.overlay_check:main",
             "calibrate_chest = classical_control.calibrate_chest:main",
+            "collect_node = classical_control.collect_node:main",
         ],
     },
 )

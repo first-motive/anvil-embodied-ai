@@ -1,5 +1,6 @@
-# Unattended collection loop: what each episode records and when a run stops for disk.
-# Read by the collection node through classical_control.recorder.load_recording_config.
+# Unattended collection loop: what each episode records, when a run stops, where cans go.
+# Read by collect_node through recorder.load_recording_config (recording, disk_guard) and
+# collect_loop.load_loop_config (loop).
 # This is a plain yaml file, not a ROS parameter file.
 #
 # Each cycle is one episode, recorded by `ros2 bag record` into <run>/NNNN/NNNN_0.mcap,
@@ -43,3 +44,22 @@ disk_guard:
   # Free space below which the run stops before starting the next cycle, in gigabytes
   # (10^9 bytes). Checked on the run directory's filesystem.
   min_free_gb: 50
+
+loop:
+  # The place point is drawn inside perception.yaml's pick region (the one region the
+  # detector watches), kept this far from its edges so the whole can lands inside, in
+  # metres. A can is ~6.6 cm across.
+  edge_margin_m: 0.05
+  # Smallest distance from the can's current centre to the new place point, in metres, so
+  # consecutive episodes differ and the can never lands on itself.
+  min_place_distance_m: 0.08
+  # Extra attempts on one can after a missed grasp, before the run stops.
+  max_grasp_retries: 2
+  # Failed attempts in a row that stop the run.
+  max_consecutive_failures: 3
+  # Time to wait for a fresh can detection before each cycle, in seconds. Perception
+  # publishes at ~5 Hz while it sees the can, so silence this long means it is gone.
+  can_pose_timeout_s: 5.0
+  # Longest a single PickPlace goal may run before it is cancelled, in seconds. A cycle
+  # at speed 0.5 takes about a minute.
+  goal_timeout_s: 300.0
