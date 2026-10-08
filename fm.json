@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "commands": {
+    "tactile-collect": {
+      "script": "scripts/run/tactile-collect.sh",
+      "help": "start, stop, or report the unattended visuo-tactile collection loop (start|stop|status, --host <robot>)"
+    }
+  }
+}
