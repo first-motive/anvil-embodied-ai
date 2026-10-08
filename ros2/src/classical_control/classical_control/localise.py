@@ -14,7 +14,7 @@ Pure library code: numpy, scipy, and PyYAML only, no ROS imports.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -214,3 +214,23 @@ def pick_region_mask(
     # margin to the arms (about 9 cm) dwarfs that.
     cv2.fillConvexPoly(mask, cv2.convexHull(pixels).astype(np.int32), 255)
     return mask
+
+
+#: The one perception parameter that may change while the node runs: a collection run
+#: sets it from its object config so the ray-plane intersection matches the object.
+LIVE_PARAMETER = "can_height"
+
+
+def live_parameter_error(updates: Mapping[str, object]) -> str | None:
+    """Why a live parameter change must be refused, or None to accept all of it.
+
+    Every other parameter is read once at startup, so changing one live would report
+    success while doing nothing.
+    """
+    for name, value in updates.items():
+        if name != LIVE_PARAMETER:
+            return f"{name} is read at startup only"
+        is_number = isinstance(value, float | int) and not isinstance(value, bool)
+        if not (is_number and math.isfinite(value) and value > 0.0):
+            return f"{LIVE_PARAMETER} must be a positive number of metres, got {value!r}"
+    return None
