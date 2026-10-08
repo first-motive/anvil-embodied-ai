@@ -129,6 +129,7 @@ runs, and nothing otherwise.
 | `eval_offline --recordings DIR --ground-truth CSV --camera-yaml YAML --out-dir DIR` | Detection rate and xy error against the demos, plus a PnP-fitted extrinsic |
 | `overlay_check --camera-yaml YAML` | Draws the live TCP and a table grid on one chest frame |
 | `calibrate_chest --camera-yaml YAML --task-params YAML` | Sweeps the arm with a hand marker and fits the chest camera; `--dry-run`, `--fit-only` |
+| `collect_node --object NAME ...` | Unattended pick and random re-place loop, one MCAP episode per cycle; see [Collecting Visuo-Tactile Episodes](#collecting-visuo-tactile-episodes) |
 
 ## Running On The Robot
 
@@ -167,6 +168,97 @@ ARMS_CONTROL_CONFIG_FILE=openarm_v2_quest_teleop_commanded_ee.yaml
 
 then run `docker compose up -d` in `~/anvil-loader`. Set it back to
 `openarm_v2_inference.yaml` for policy runs.
+
+## Collecting Visuo-Tactile Episodes
+
+`collect_node` runs the pick and place unattended to collect paired camera and FlexiTac
+data. Each cycle picks the can and places it at a random free point in the pick region,
+so the scene resets itself and changes every time. Unlike the baseline it retries a
+missed grasp, because a run is only as long as its failures allow.
+
+```
+fresh can pose → sample place point + knobs → start bag → PickPlace goal → stop bag
+  → episode metadata.json → SUCCESS: next cycle
+                            GRASP_MISSED: HOME, same knobs again (at most 2 retries)
+                            anything else: stop
+stop (any reason, Ctrl-C, crash) → HOME goal → summary.json
+```
+
+The goal uses the `place_target`, `grasp_dz`, `closure_width` and `yaw_offset` fields
+(see the action table). Knob ranges come from `config/objects/<name>.yaml` and start at
+zero width; widen one at a time while attended. A run also sets perception's
+`can_height` from that file. `config/collect.yaml` lists the recorded topics (every
+loader topic plus `/gripper/tactile/*`), the disk guard and the loop's margins and
+timeouts.
+
+### Stop Rules
+
+| Stop reason | When |
+|---|---|
+| `grasp_retries` | A grasp missed again after 2 retries on the same can |
+| `consecutive_failures` | 3 failed attempts in a row; a backstop for limits set tighter than the retry cap |
+| `error:<CODE>` | Any other result code, e.g. `error:NO_CAN`; also `GOAL_TIMEOUT`, `NO_RESULT`, `RECORDER`, `HOME` |
+| `disk` | Free space below `disk_guard.min_free_gb` (50 GB) before a cycle |
+| `cycles`, `time` | `--cycles` successes reached, or `--hours` elapsed, before a cycle |
+| `operator` | Ctrl-C, `collect-stop`, or `tactile-collect stop` |
+
+### Output
+
+The layout matches the loader's episodes (`NNNN/NNNN_0.mcap` plus `metadata.json`, as in
+`tests/smoke/fixtures/test-session`), which `mcap-valid` and `mcap-convert` read.
+
+```
+data/classical/collect/<run id>/
+  metadata.json          object, knob ranges, stop limits, speed, git sha
+  0001/0001_0.mcap       one episode per attempt, retries included
+  0001/metadata.json     status, error_code, attempt, can_xy, place_xy, knobs, duration
+  ...
+  summary.json           attempts, episodes, successes, failures, stop_reason, home
+```
+
+With `--no-record` each episode directory holds only `metadata.json`. Deleting old runs
+and uploading them is the team's process, not the loop's.
+
+### Supervision Ramp
+
+Unattended runs are earned in three gates. Fix what each gate finds on a branch before
+moving on.
+
+| Gate | Run | Passes when |
+|---|---|---|
+| G1 | 20 cycles at `--speed 0.5`, attended: first `--no-record`, then recording | At least 18 succeed, and a recorded episode passes `mcap-valid` with the cameras and all four `/gripper/tactile/*` topics |
+| G2 | One hour recording, someone nearby but not watching | No unsafe event and the right stop reason logged. Then write the marker: `echo "$(date -u +%F) <run id>" > data/classical/collect/.g2_passed` |
+| G3 | First unattended run, started from Slack | Ends on its own limit or a clean stop, arm at HOME |
+
+```bash
+./scripts/run_classical.sh up                     # perception + task nodes; loader already in commanded EE
+./scripts/run_classical.sh collect --object can --cycles 20 --speed 0.5 --no-record
+./scripts/run_classical.sh collect --object can --hours 1 --speed 0.5
+./scripts/run_classical.sh collect --object can --hours 2 --detach   # background container
+./scripts/run_classical.sh collect-stop          # Ctrl-C it: cancel, HOME, summary.json
+```
+
+`--dry-run` sends dry-run goals, so the loop, its metadata and its stop rules run with
+nothing moving.
+
+### Starting And Stopping From Slack
+
+`fm.json` at the repo root mounts the `fm tactile-collect` verb
+(`scripts/run/tactile-collect.sh`). With `--host` it runs on the robot over
+`ssh -o BatchMode=yes`, against the checkout at `$ANVIL_EMBODIED_AI_DIR`
+(default `~/anvil-embodied-ai`).
+
+```bash
+fm tactile-collect start --object can --hours 2 --host fm-rob-01   # prints the run id
+fm tactile-collect status --json --host fm-rob-01
+fm tactile-collect stop --host fm-rob-01
+```
+
+`start` refuses with exit 3 and a fix message unless the classical nodes are up, the
+loader is active in commanded-EE mode, all four `/gripper/tactile/*` topics have a
+publisher, the empty-table background exists, free disk is above the guard, no loop is
+running, and the G2 marker exists. Exit codes: 0 done, 1 unhealthy, 2 usage,
+3 precondition.
 
 ## Calibrating The Chest Camera
 
@@ -228,6 +320,13 @@ besides the webapp e-stop.
   unexplained drift as a joint-limit problem and stop.
 - Run a dry run first, then the first live trial at `--speed 0.5` with a hand on the
   e-stop. Stand clear of the arm.
+- An unattended collection run has no hand on the e-stop. Its protection is the stop
+  rules, the G2 gate in front of `tactile-collect start`, and the ramp above. Every
+  sampled place point lies inside the pick region and is clamped into the workspace box
+  again by the task node, because the loader does not reject an unreachable pose.
+- On a stop rule, Ctrl-C, SIGTERM or an exception, a collection run sends a HOME goal
+  that a second Ctrl-C does not cancel. `docker stop` sends SIGINT with a 3-minute grace
+  period for the same reason. A SIGKILL or a power loss skips the HOME move.
 
 ## Tests
 
