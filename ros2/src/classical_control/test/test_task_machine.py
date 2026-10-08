@@ -8,13 +8,19 @@ from classical_control.safety import SafetyLimiter, SafetyLimits
 from classical_control.task_machine import (
     MIN_SPEED_SCALE,
     ErrorCode,
+    GoalOverrides,
     Phase,
     PickPlaceTask,
     TaskConfig,
     effective_speed_scale,
+    goal_overrides,
     mined_targets,
+    place_target_in_workspace,
+    plan_steps,
+    required_detections,
 )
 from classical_control.trajectory import Pose
+from scipy.spatial.transform import Rotation
 
 RATE_HZ = 30.0
 DT = 1.0 / RATE_HZ
@@ -23,6 +29,14 @@ HOME = Pose([0.396, -0.185, 0.506], GRASP_QUAT)
 CAN = (0.40, -0.30, 0.28)
 PAPER = (0.30, -0.05, 0.22)
 CLOSED_ON_CAN = 0.0185
+
+PLACE_TARGET = (0.20, -0.40, 0.0)
+OVERRIDE_LIMITS = {
+    "max_grasp_dz_m": 0.02,
+    "max_yaw_offset_rad": 0.35,
+    "gripper_range_m": (0.0, 0.05),
+    "max_closure_m": 0.010,
+}
 
 HAPPY_ORDER = [
     Phase.LOCALISE,
@@ -227,3 +241,130 @@ def test_height_offset_moves_grasp_and_place_together():
     grasp_z, place_z, _ = mined_targets(mined, -0.035)
     assert grasp_z == pytest.approx(0.306)
     assert place_z == pytest.approx(0.309)
+
+
+# ---- goal overrides ----------------------------------------------------------
+
+
+def test_default_overrides_plan_the_same_steps(config):
+    plain = plan_steps(config, CAN, PAPER)
+    defaults = plan_steps(config, CAN, PAPER, goal_overrides(0.0, 0.0, 0.0, **OVERRIDE_LIMITS))
+    assert [(s.phase, s.gripper, s.dwell_s) for s in plain] == [
+        (s.phase, s.gripper, s.dwell_s) for s in defaults
+    ]
+    for a, b in zip(plain, defaults):
+        np.testing.assert_array_equal(a.target.position, b.target.position)
+        np.testing.assert_array_equal(a.target.quat_xyzw, b.target.quat_xyzw)
+
+
+def test_place_target_sets_place_xy(config, limiter):
+    task = PickPlaceTask(config, limiter, CAN, PLACE_TARGET)
+    for phase in (Phase.TRANSIT, Phase.LOWER, Phase.OPEN, Phase.RETREAT):
+        np.testing.assert_allclose(step_target(task, phase).position[:2], PLACE_TARGET[:2])
+    run(task)
+    assert task.result is ErrorCode.SUCCESS
+
+
+def test_place_target_outside_workspace_is_clamped_into_it(config, limiter):
+    target = place_target_in_workspace(limiter.limits, (0.90, -0.80, 0.0))
+    assert target == (0.65, -0.55, 0.0)
+    task = PickPlaceTask(config, limiter, CAN, target)
+    assert task.result is None
+    np.testing.assert_allclose(step_target(task, Phase.LOWER).position[:2], (0.65, -0.55))
+
+
+def test_non_finite_place_target_is_refused(limiter):
+    with pytest.raises(ValueError, match="finite"):
+        place_target_in_workspace(limiter.limits, (float("nan"), 0.0, 0.0))
+
+
+def test_grasp_dz_moves_grasp_and_place_heights(config, limiter):
+    task = PickPlaceTask(config, limiter, CAN, PAPER, overrides=GoalOverrides(grasp_dz_m=-0.01))
+    assert step_target(task, Phase.DESCEND).position[2] == pytest.approx(config.grasp_z_m - 0.01)
+    assert step_target(task, Phase.LOWER).position[2] == pytest.approx(config.place_z_m - 0.01)
+    assert step_target(task, Phase.LIFT).position[2] == pytest.approx(
+        config.grasp_z_m - 0.01 + config.approach_height_m
+    )
+
+
+def test_overrides_are_clamped_to_their_limits():
+    high = goal_overrides(0.5, 0.2, 2.0, **OVERRIDE_LIMITS)
+    low = goal_overrides(-0.5, 0.001, -2.0, **OVERRIDE_LIMITS)
+    assert high == GoalOverrides(grasp_dz_m=0.02, closure_m=0.010, yaw_offset_rad=0.35)
+    assert low == GoalOverrides(grasp_dz_m=-0.02, closure_m=0.001, yaw_offset_rad=-0.35)
+    assert goal_overrides(0.0, -1.0, 0.0, **OVERRIDE_LIMITS).closure_m is None
+
+
+@pytest.mark.parametrize("field", range(3))
+def test_nan_override_is_refused(field):
+    values = [0.0, 0.0, 0.0]
+    values[field] = float("nan")
+    with pytest.raises(ValueError, match="NaN"):
+        goal_overrides(*values, **OVERRIDE_LIMITS)
+
+
+def test_closure_is_commanded_at_close(config, limiter):
+    task = PickPlaceTask(config, limiter, CAN, PAPER, overrides=GoalOverrides(closure_m=0.012))
+    close = next(step for step in task.steps if step.phase is Phase.CLOSE)
+    assert close.gripper == 0.012
+    assert all(
+        step.gripper == 0.012 for step in task.steps if step.phase in (Phase.LIFT, Phase.LOWER)
+    )
+
+
+@pytest.mark.parametrize(
+    ("finger", "expected"),
+    [
+        # An empty close stops at the commanded closure, above the plain threshold.
+        (0.010, ErrorCode.GRASP_MISSED),
+        (0.010 + 0.007, ErrorCode.GRASP_MISSED),
+        # At the largest allowed closure a held can still reads as a grasp.
+        (CLOSED_ON_CAN, ErrorCode.SUCCESS),
+    ],
+)
+def test_grasp_missed_check_is_measured_from_closure(config, limiter, finger, expected):
+    closure = goal_overrides(0.0, 0.05, 0.0, **OVERRIDE_LIMITS).closure_m
+    assert closure == 0.010
+    task = PickPlaceTask(config, limiter, CAN, PAPER, overrides=GoalOverrides(closure_m=closure))
+    run(task, finger=finger)
+    assert task.result is expected
+
+
+def test_yaw_offset_turns_grasp_about_world_z_and_leaves_home(config, limiter):
+    task = PickPlaceTask(config, limiter, CAN, PAPER, overrides=GoalOverrides(yaw_offset_rad=0.3))
+    base = Rotation.from_quat(GRASP_QUAT)
+    for step in task.steps:
+        turned = Rotation.from_quat(step.target.quat_xyzw)
+        if step.phase is Phase.HOME:
+            np.testing.assert_allclose(step.target.quat_xyzw, HOME.quat_xyzw)
+            continue
+        relative = (turned * base.inv()).as_rotvec()
+        np.testing.assert_allclose(relative, [0.0, 0.0, 0.3], atol=1e-9)
+
+
+def test_home_only_plans_one_home_step_and_succeeds(config, limiter):
+    task = PickPlaceTask.home_only(config, limiter)
+    assert [(s.phase, s.gripper) for s in task.steps] == [(Phase.HOME, config.gripper_home_m)]
+    phases, commands = run(task, finger=0.0)
+    assert distinct(phases) == [Phase.LOCALISE, Phase.HOME]
+    assert task.result is ErrorCode.SUCCESS
+    np.testing.assert_allclose(commands[-1].pose.position, HOME.position)
+
+
+def test_home_only_dry_run_commands_nothing(config, limiter):
+    task = PickPlaceTask.home_only(config, limiter, dry_run=True)
+    assert task.result is ErrorCode.SUCCESS
+    assert task.tick(0.0, HOME, 0.045) is None
+
+
+@pytest.mark.parametrize(
+    ("home_only", "place_target_set", "needed"),
+    [
+        (False, False, ("can", "paper")),
+        (False, True, ("can",)),
+        (True, False, ()),
+        (True, True, ()),
+    ],
+)
+def test_required_detections_follow_the_goal(home_only, place_target_set, needed):
+    assert required_detections(home_only=home_only, place_target_set=place_target_set) == needed

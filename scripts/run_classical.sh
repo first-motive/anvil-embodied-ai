@@ -17,6 +17,13 @@
 #   trial [--dry-run] [--n N] [--speed S]
 #                          Run N pick-place goals, prompting between each, and append
 #                          one row per goal to data/classical/trials.csv
+#   collect --object NAME [--hours H] [--cycles N] [--speed S] [--no-record]
+#           [--dry-run] [--run-id ID] [--detach]
+#                          Unattended pick and random re-place loop, one MCAP episode
+#                          per cycle → data/classical/collect/<run>/. Ctrl-C (or
+#                          collect-stop) ends it at HOME with summary.json written.
+#                          --detach runs it in the background container classical-collect
+#   collect-stop           SIGINT the detached loop and wait for it to finish
 #   -h | --help            Show this message
 #
 # Extra args after mine/eval/calibrate/overlay pass straight to the tool.
@@ -35,6 +42,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE=(docker compose -f "${REPO_ROOT}/docker-compose.classical.yml")
 DATA_DIR="${REPO_ROOT}/data/classical"
 TRIALS_CSV="${DATA_DIR}/trials.csv"
+COLLECT_CONTAINER=classical-collect
+# Time the loop gets after SIGINT to cancel, drive HOME and write its summary.
+COLLECT_STOP_TIMEOUT_S=180
 
 usage() {
     sed -n '2,/^set -/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'
@@ -114,6 +124,67 @@ trial() {
     done
 }
 
+collect() {
+    local object="" hours="" cycles="" speed=0.5 run_id="" detach=false
+    local flags=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --object) object="$2"; shift ;;
+            --hours) hours="$2"; shift ;;
+            --cycles) cycles="$2"; shift ;;
+            --speed) speed="$2"; shift ;;
+            --run-id) run_id="$2"; shift ;;
+            --no-record) flags+=(--no-record) ;;
+            --dry-run) flags+=(--dry-run) ;;
+            --detach) detach=true ;;
+            *) echo "unknown collect option: $1" >&2; exit 2 ;;
+        esac
+        shift
+    done
+
+    [[ "$object" =~ ^[a-z0-9_-]+$ ]] || { echo "--object must name a config/objects/*.yaml, got: ${object:-nothing}" >&2; exit 2; }
+    [ -f "${REPO_ROOT}/ros2/src/classical_control/config/objects/${object}.yaml" ] \
+        || { echo "no object config: config/objects/${object}.yaml" >&2; exit 2; }
+    [[ "$speed" =~ ^[0-9]*\.?[0-9]+$ ]] || { echo "--speed must be a number, got: $speed" >&2; exit 2; }
+    [ -z "$hours" ] || [[ "$hours" =~ ^[0-9]*\.?[0-9]+$ ]] || { echo "--hours must be a number, got: $hours" >&2; exit 2; }
+    [ -z "$cycles" ] || [[ "$cycles" =~ ^[0-9]+$ ]] || { echo "--cycles must be a whole number, got: $cycles" >&2; exit 2; }
+    [ -z "$run_id" ] || [[ "$run_id" =~ ^[0-9A-Za-z_-]+$ ]] || { echo "--run-id must be letters, digits, _ or -" >&2; exit 2; }
+
+    local args=(--object "$object" --speed "$speed" "${flags[@]+"${flags[@]}"}")
+    [ -n "$hours" ] && args+=(--hours "$hours")
+    [ -n "$cycles" ] && args+=(--cycles "$cycles")
+    [ -n "$run_id" ] && args+=(--run-id "$run_id")
+
+    mkdir -p "${DATA_DIR}/collect"
+    local run=("${COMPOSE[@]}" run --rm --no-deps --name "$COLLECT_CONTAINER")
+    $detach && run+=(-d)
+    # The image holds no .git, so the commit is read here and stamped into the run metadata.
+    local sha
+    sha="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    # python -m rather than `ros2 run`, so the node is the container's PID 1 and gets the
+    # collect-stop SIGINT itself, with no wrapper in between.
+    "${run[@]}" classical python3 -m classical_control.collect_node \
+        --objects-dir /workspace/config/objects \
+        --collect-config /workspace/config/collect.yaml \
+        --perception-config /workspace/config/perception.yaml \
+        --out-root /data/collect --git-sha "$sha" "${args[@]}"
+}
+
+collect_stop() {
+    docker kill --signal=SIGINT "$COLLECT_CONTAINER" >/dev/null 2>&1 \
+        || { echo "no collection loop is running"; return 0; }
+    local waited=0
+    while docker inspect "$COLLECT_CONTAINER" >/dev/null 2>&1; do
+        if [ "$waited" -ge "$COLLECT_STOP_TIMEOUT_S" ]; then
+            echo "loop still running after ${COLLECT_STOP_TIMEOUT_S}s; check the arm and 'docker logs ${COLLECT_CONTAINER}'" >&2
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    echo "collection loop stopped after ${waited}s"
+}
+
 VERB="${1:-}"
 [ $# -gt 0 ] && shift
 mkdir -p "$DATA_DIR"
@@ -150,6 +221,8 @@ case "$VERB" in
         in_running ros2 service call /classical/capture_background std_srvs/srv/Trigger
         ;;
     trial) trial "$@" ;;
+    collect) collect "$@" ;;
+    collect-stop) collect_stop ;;
     -h | --help | "") usage ;;
     *)
         echo "unknown verb: ${VERB}" >&2

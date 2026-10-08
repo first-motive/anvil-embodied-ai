@@ -1,0 +1,24 @@
+# Object config for the collection loop (collect_node --object can). Plain yaml, not a
+# ROS parameter file: collect_node reads it through classical_control.objects.ObjectConfig
+# and copies it into the run's metadata.json. One object per run; swap objects between runs.
+
+# Height of the upright object, in metres: the 7UP can used for the demos, measured. At
+# the start of a run the perception node's can_height is set to this, because the
+# ray-plane intersection that places the object on the table depends on it.
+height_m: 0.135
+
+# Per-cycle variation, each sampled uniformly from [low, high] and sent on the
+# PickPlace goal. All zero width until tuned on the robot: widen one at a time while
+# attended, and keep the task node's clamps (max_grasp_dz_m, max_yaw_offset_rad) in mind,
+# since a value past them is clamped, not sampled.
+knobs:
+  # Grasp offset added to the tuned grasp and place heights, in metres. Place moves with
+  # it, so the can still lands upright. Negative grips lower on the straight body.
+  grasp_dz_m: [0.0, 0.0]
+  # Finger position commanded at CLOSE, in metres. 0 is fully closed; a closed can reads
+  # ~0.0185, so values below that only change how hard the can is squeezed. Keep the high
+  # end at or below 0.010: the missed-grasp check fires below closure + 0.008, and above
+  # 0.010 that threshold reaches a held can's reading.
+  closure_m: [0.0, 0.0]
+  # Rotation of the grasp about world z, in radians, applied from pre-grasp to retreat.
+  yaw_offset_rad: [0.0, 0.0]

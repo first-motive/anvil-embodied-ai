@@ -39,7 +39,8 @@
     table_z: 0.207
 
     # Height of an upright can, in metres (the 7UP can used for the demos, measured). The
-    # can's blob centroid is placed on the plane table_z + can_height / 2.
+    # can's blob centroid is placed on the plane table_z + can_height / 2. The only parameter
+    # that may change while running: a collection run sets it from config/objects/<name>.yaml.
     can_height: 0.135
 
     # Pick region: the world-frame table rectangle where the can and paper may be, as

@@ -12,6 +12,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
+        ("share/" + package_name + "/config/objects", glob("config/objects/*.yaml")),
         ("share/" + package_name + "/launch", glob("launch/*.py")),
     ],
     python_requires=">=3.12",
@@ -30,6 +31,7 @@ setup(
             "eval_offline = classical_control.eval_offline:main",
             "overlay_check = classical_control.overlay_check:main",
             "calibrate_chest = classical_control.calibrate_chest:main",
+            "collect_node = classical_control.collect_node:main",
         ],
     },
 )

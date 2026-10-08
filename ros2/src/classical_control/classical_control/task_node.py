@@ -12,7 +12,8 @@ this node localises, gates and clamps:
 - LOCALISE: the hardware gate must be open, the arm and finger inputs fresh,
   and the can and paper poses newer than `localise_max_age_s`, otherwise the
   goal aborts with HARDWARE_NOT_ACTIVE, STALE_POSE, NO_CAN or NO_PAPER before
-  anything moves.
+  anything moves. A goal with a place target needs no paper; a home-only goal
+  needs neither can nor paper.
 - Every tick of the 30 Hz timer checks the gate and freshness again (faulting
   the task into HOLD if either fails), then passes the task's command through
   `SafetyLimiter.clamp` and `clamp_gripper`. `/commanded_ee_right` bypasses all
@@ -49,7 +50,17 @@ from rclpy.task import Future
 from sensor_msgs.msg import JointState
 
 from .safety import ACTIVE_STATE, FreshnessGate, HardwareStateGate, SafetyLimiter, SafetyLimits
-from .task_machine import ErrorCode, Phase, PickPlaceTask, TaskConfig, mined_targets
+from .task_machine import (
+    ErrorCode,
+    GoalOverrides,
+    Phase,
+    PickPlaceTask,
+    TaskConfig,
+    goal_overrides,
+    mined_targets,
+    place_target_in_workspace,
+    required_detections,
+)
 from .trajectory import Pose
 
 COMMAND_TOPIC = "/commanded_ee_right"
@@ -83,6 +94,9 @@ PARAMETER_DEFAULTS = {
     "approach_height_m": 0.08,
     "grasp_height_offset_m": -0.035,
     "can_xy_bias_m": [0.0, 0.0],
+    "max_grasp_dz_m": 0.02,
+    "max_yaw_offset_rad": 0.35,
+    "max_closure_m": 0.010,
     "close_dwell_s": 1.0,
     "open_dwell_s": 0.8,
     "gripper_open_m": 0.05,
@@ -125,6 +139,9 @@ class PickPlaceNode(Node):
         self._rate_hz = float(param["control_rate_hz"])
         self._limiter = SafetyLimiter(SafetyLimits.from_dict({k: param[k] for k in SAFETY_KEYS}))
         self._config = self._load_task_config(param)
+        self._max_grasp_dz_m = float(param["max_grasp_dz_m"])
+        self._max_yaw_offset_rad = float(param["max_yaw_offset_rad"])
+        self._max_closure_m = float(param["max_closure_m"])
 
         self._gate = HardwareStateGate()
         self._freshness = FreshnessGate(float(param["pose_max_age_s"]))
@@ -273,6 +290,18 @@ class PickPlaceNode(Node):
         if math.isnan(goal.speed_scale):
             self.get_logger().warning("Rejecting goal: speed_scale is NaN")
             return GoalResponse.REJECT
+        target = goal.place_target
+        overrides = (
+            goal.grasp_dz,
+            goal.closure_width,
+            goal.yaw_offset,
+            target.x,
+            target.y,
+            target.z,
+        )
+        if not all(math.isfinite(value) for value in overrides):
+            self.get_logger().warning("Rejecting goal: an override field is not finite")
+            return GoalResponse.REJECT
         busy, self._busy = self._busy, True
         if busy:
             self.get_logger().warning("Rejecting goal: a pick and place is already running")
@@ -293,7 +322,10 @@ class PickPlaceNode(Node):
         result = PickPlace.Result()
         self._publish_phase(goal_handle, Phase.LOCALISE)
 
-        code = self._localise_error(started, dry_run=goal.dry_run)
+        needed = required_detections(
+            home_only=goal.home_only, place_target_set=goal.place_target_set
+        )
+        code = self._localise_error(started, dry_run=goal.dry_run, needed=needed)
         can, paper = self._can, self._paper
         if can is not None:
             result.can_pose = can
@@ -302,16 +334,45 @@ class PickPlaceNode(Node):
 
         task = None
         if code is None:
-            task = PickPlaceTask(
-                self._config,
-                self._limiter,
-                _xyz(can),
-                _xyz(paper),
-                speed_scale=goal.speed_scale,
-                dry_run=goal.dry_run,
-            )
+            overrides = GoalOverrides()
+            if goal.home_only:
+                task = PickPlaceTask.home_only(
+                    self._config,
+                    self._limiter,
+                    speed_scale=goal.speed_scale,
+                    dry_run=goal.dry_run,
+                )
+            else:
+                overrides = goal_overrides(
+                    goal.grasp_dz,
+                    goal.closure_width,
+                    goal.yaw_offset,
+                    max_grasp_dz_m=self._max_grasp_dz_m,
+                    max_yaw_offset_rad=self._max_yaw_offset_rad,
+                    gripper_range_m=(
+                        self._limiter.limits.gripper_min_m,
+                        self._limiter.limits.gripper_max_m,
+                    ),
+                    max_closure_m=self._max_closure_m,
+                )
+                if goal.place_target_set:
+                    target = goal.place_target
+                    place = place_target_in_workspace(
+                        self._limiter.limits, (target.x, target.y, target.z)
+                    )
+                else:
+                    place = _xyz(paper)
+                task = PickPlaceTask(
+                    self._config,
+                    self._limiter,
+                    _xyz(can),
+                    place,
+                    overrides=overrides,
+                    speed_scale=goal.speed_scale,
+                    dry_run=goal.dry_run,
+                )
             if goal.dry_run:
-                self._log_plan(task)
+                self._log_plan(task, None if goal.home_only else overrides)
             if not task.done:
                 await self._run(goal_handle, task)
             code = task.result
@@ -328,18 +389,24 @@ class PickPlaceNode(Node):
         self.get_logger().info(f"Pick and place finished: {code.name} in {phase}")
         return result
 
-    def _localise_error(self, now: float, *, dry_run: bool) -> ErrorCode | None:
-        """Pre-flight checks that need no plan."""
+    def _localise_error(
+        self, now: float, *, dry_run: bool, needed: tuple[str, ...]
+    ) -> ErrorCode | None:
+        """Pre-flight checks that need no plan.
+
+        Args:
+            needed: The detections this goal uses, from `required_detections`.
+        """
         if not dry_run:
             if not self._gate.allows_commands:
                 return ErrorCode.HARDWARE_NOT_ACTIVE
             if self._measured is None or self._freshness.stale(ARM_INPUTS, now):
                 return ErrorCode.STALE_POSE
-        if self._can is None:
+        if "can" in needed and self._can is None:
             return ErrorCode.NO_CAN
-        if self._paper is None:
+        if "paper" in needed and self._paper is None:
             return ErrorCode.NO_PAPER
-        if self._localisation.stale(("can", "paper"), now):
+        if self._localisation.stale(needed, now):
             return ErrorCode.STALE_POSE
         return None
 
@@ -358,9 +425,17 @@ class PickPlaceNode(Node):
         feedback.phase = int(phase)
         goal_handle.publish_feedback(feedback)
 
-    def _log_plan(self, task: PickPlaceTask) -> None:
+    def _log_plan(self, task: PickPlaceTask, overrides: GoalOverrides | None) -> None:
+        """Log the planned waypoints; `overrides` is None for a home-only goal."""
         v_max, w_max = task.speed_limits
-        lines = [f"Dry run plan (v_max={v_max:.3f} m/s, w_max={w_max:.2f} rad/s):"]
+        header = f"Dry run plan (v_max={v_max:.3f} m/s, w_max={w_max:.2f} rad/s"
+        if overrides is not None:
+            closure = "configured" if overrides.closure_m is None else f"{overrides.closure_m:.4f}"
+            header += (
+                f", grasp_dz={overrides.grasp_dz_m:+.3f} m, closure={closure}, "
+                f"yaw_offset={overrides.yaw_offset_rad:+.3f} rad"
+            )
+        lines = [header + "):"]
         for step in task.steps:
             x, y, z = step.target.position
             qx, qy, qz, qw = step.target.quat_xyzw

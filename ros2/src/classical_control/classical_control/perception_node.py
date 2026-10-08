@@ -29,6 +29,7 @@ import rclpy
 from ament_index_python.packages import get_package_share_directory
 from builtin_interfaces.msg import Time as TimeMsg
 from geometry_msgs.msg import PoseStamped, TransformStamped
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -41,6 +42,7 @@ from classical_control.camera_model import pose_to_matrix
 from classical_control.detector import Detection, DetectorParams, detect
 from classical_control.localise import (
     ChestCameraConfig,
+    live_parameter_error,
     locate_can,
     locate_paper,
     pick_region_mask,
@@ -123,6 +125,9 @@ class PerceptionNode(Node):
         )
         self.create_subscription(CompressedImage, _IMAGE_TOPIC, self._on_image, camera_qos)
         self.create_service(Trigger, _CAPTURE_SERVICE, self._on_capture_background)
+        # The collection loop sets can_height from its object config at the start of a run,
+        # without restarting this node; every other parameter is read once.
+        self.add_on_set_parameters_callback(self._on_set_parameters)
 
         self.get_logger().info(
             f"camera {config_path} mounted on {config.parent_frame}; processing at "
@@ -133,6 +138,16 @@ class PerceptionNode(Node):
     def _param(self, name: str):
         """Return a declared parameter's value."""
         return self.get_parameter(name).value
+
+    def _on_set_parameters(self, parameters) -> SetParametersResult:
+        """Apply a live can_height change; refuse live changes to anything else."""
+        error = live_parameter_error({p.name: p.value for p in parameters})
+        if error is not None:
+            return SetParametersResult(successful=False, reason=error)
+        for parameter in parameters:
+            self._can_height = float(parameter.value)
+            self.get_logger().info(f"can_height is now {self._can_height:.3f} m")
+        return SetParametersResult(successful=True)
 
     def _mounting_transform(self, config: ChestCameraConfig) -> TransformStamped:
         """Build the static parent -> optical transform from the camera config."""

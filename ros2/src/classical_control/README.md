@@ -35,7 +35,11 @@ cancel, stale input or hardware stop in any phase → HOLD the last command → 
 - Every waypoint is checked against the workspace box before anything moves.
 - After CLOSE, a finger position below `grasp_missed_threshold_m` means the gripper
   closed on nothing: the task ends with `GRASP_MISSED`. A can holds the fingers near
-  0.0185 m; an empty close reads near 0.
+  0.0185 m; an empty close reads near 0. With a goal `closure_width` an empty close
+  reads near that width, so the check is `closure_width + grasp_missed_threshold_m`.
+- A goal with `place_target_set` places at its xy instead of on the paper and needs
+  no paper detection. A `home_only` goal skips LOCALISE's can and paper checks and
+  runs HOME alone with the gripper at `gripper_home_m`.
 - HOME is a commanded pose, not `/arms_resetter/reset`, which hands control back to
   the latched target and snaps the arm back.
 
@@ -47,12 +51,18 @@ cancel, stale input or hardware stop in any phase → HOLD the last command → 
 |---|---|---|
 | Goal `dry_run` | bool | Plan and log the waypoints; publish nothing to the arm |
 | Goal `speed_scale` | float64 | Scales `v_max_mps` and `w_max_radps`. Clamped to [0.1, 1]; 0 (the default) runs at full configured speed; NaN is rejected |
+| Goal `place_target_set`, `place_target` | bool, Point | Place at this `world` xy instead of on the paper; skips the paper checks. xy clamped into the workspace box |
+| Goal `grasp_dz` | float64 | Metres added to grasp and place height. Clamped to ±`max_grasp_dz_m` |
+| Goal `closure_width` | float64 | Finger position commanded at CLOSE. 0 (the default) uses `gripper_closed_m`; otherwise clamped to [`gripper_min_m`, `max_closure_m`] |
+| Goal `yaw_offset` | float64 | Radians about world z added to the grasp orientation, pre-grasp to retreat. Clamped to ±`max_yaw_offset_rad` |
+| Goal `home_only` | bool | Move HOME with the gripper at `gripper_home_m` and stop; needs no can or paper |
 | Feedback `phase` | uint8 | Current phase, `LOCALISE` (0) to `HOME` (9), `HOLD` (10) |
 | Result `error_code` | int8 | `SUCCESS`, `NO_CAN`, `NO_PAPER`, `OUT_OF_WORKSPACE`, `GRASP_MISSED`, `HARDWARE_NOT_ACTIVE`, `STALE_POSE`, `CANCELLED` |
 | Result `can_pose`, `paper_pose` | PoseStamped | The detections the task used, in `world` |
 | Result `duration_s` | float64 | Wall time from goal to result |
 
-Only one goal runs at a time; a second is rejected.
+Every new goal field at its default reproduces the plain pick and place. A non-finite
+(NaN or inf) float field rejects the goal. Only one goal runs at a time; a second is rejected.
 
 ### perception_node
 
@@ -103,6 +113,7 @@ runs, and nothing otherwise.
 | `approach_height_m` | double | 0.08 | Clearance for pre-grasp, lift, transit and retreat |
 | `grasp_height_offset_m` | double | −0.035 | Added to the demos' grasp and place heights; grips below the can's neck |
 | `can_xy_bias_m` | double[2] | [0.0, 0.0] | Added to the detected can xy; take it from `eval_offline` |
+| `max_grasp_dz_m`, `max_yaw_offset_rad`, `max_closure_m` | double | 0.02, 0.35, 0.010 | Clamp limits for a goal's `grasp_dz`, `yaw_offset` and `closure_width` |
 | `close_dwell_s`, `open_dwell_s` | double | 1.0, 0.8 | |
 | `gripper_open_m`, `gripper_closed_m`, `gripper_home_m` | double | 0.05, 0.0, 0.045 | |
 | `grasp_missed_threshold_m` | double | 0.008 | |
@@ -118,6 +129,7 @@ runs, and nothing otherwise.
 | `eval_offline --recordings DIR --ground-truth CSV --camera-yaml YAML --out-dir DIR` | Detection rate and xy error against the demos, plus a PnP-fitted extrinsic |
 | `overlay_check --camera-yaml YAML` | Draws the live TCP and a table grid on one chest frame |
 | `calibrate_chest --camera-yaml YAML --task-params YAML` | Sweeps the arm with a hand marker and fits the chest camera; `--dry-run`, `--fit-only` |
+| `collect_node --object NAME ...` | Unattended pick and random re-place loop, one MCAP episode per cycle; see [Collecting Visuo-Tactile Episodes](#collecting-visuo-tactile-episodes) |
 
 ## Running On The Robot
 
@@ -156,6 +168,97 @@ ARMS_CONTROL_CONFIG_FILE=openarm_v2_quest_teleop_commanded_ee.yaml
 
 then run `docker compose up -d` in `~/anvil-loader`. Set it back to
 `openarm_v2_inference.yaml` for policy runs.
+
+## Collecting Visuo-Tactile Episodes
+
+`collect_node` runs the pick and place unattended to collect paired camera and FlexiTac
+data. Each cycle picks the can and places it at a random free point in the pick region,
+so the scene resets itself and changes every time. Unlike the baseline it retries a
+missed grasp, because a run is only as long as its failures allow.
+
+```
+fresh can pose → sample place point + knobs → start bag → PickPlace goal → stop bag
+  → episode metadata.json → SUCCESS: next cycle
+                            GRASP_MISSED: HOME, same knobs again (at most 2 retries)
+                            anything else: stop
+stop (any reason, Ctrl-C, crash) → HOME goal → summary.json
+```
+
+The goal uses the `place_target`, `grasp_dz`, `closure_width` and `yaw_offset` fields
+(see the action table). Knob ranges come from `config/objects/<name>.yaml` and start at
+zero width; widen one at a time while attended. A run also sets perception's
+`can_height` from that file. `config/collect.yaml` lists the recorded topics (every
+loader topic plus `/gripper/tactile/*`), the disk guard and the loop's margins and
+timeouts.
+
+### Stop Rules
+
+| Stop reason | When |
+|---|---|
+| `grasp_retries` | A grasp missed again after 2 retries on the same can |
+| `consecutive_failures` | 3 failed attempts in a row; a backstop for limits set tighter than the retry cap |
+| `error:<CODE>` | Any other result code, e.g. `error:NO_CAN`; also `GOAL_TIMEOUT`, `NO_RESULT`, `RECORDER`, `HOME` |
+| `disk` | Free space below `disk_guard.min_free_gb` (50 GB) before a cycle |
+| `cycles`, `time` | `--cycles` successes reached, or `--hours` elapsed, before a cycle |
+| `operator` | Ctrl-C, `collect-stop`, or `tactile-collect stop` |
+
+### Output
+
+The layout matches the loader's episodes (`NNNN/NNNN_0.mcap` plus `metadata.json`, as in
+`tests/smoke/fixtures/test-session`), which `mcap-valid` and `mcap-convert` read.
+
+```
+data/classical/collect/<run id>/
+  metadata.json          object, knob ranges, stop limits, speed, git sha
+  0001/0001_0.mcap       one episode per attempt, retries included
+  0001/metadata.json     status, error_code, attempt, can_xy, place_xy, knobs, duration
+  ...
+  summary.json           attempts, episodes, successes, failures, stop_reason, home
+```
+
+With `--no-record` each episode directory holds only `metadata.json`. Deleting old runs
+and uploading them is the team's process, not the loop's.
+
+### Supervision Ramp
+
+Unattended runs are earned in three gates. Fix what each gate finds on a branch before
+moving on.
+
+| Gate | Run | Passes when |
+|---|---|---|
+| G1 | 20 cycles at `--speed 0.5`, attended: first `--no-record`, then recording | At least 18 succeed, and a recorded episode passes `mcap-valid` with the cameras and all four `/gripper/tactile/*` topics |
+| G2 | One hour recording, someone nearby but not watching | No unsafe event and the right stop reason logged. Then write the marker: `echo "$(date -u +%F) <run id>" > data/classical/collect/.g2_passed` |
+| G3 | First unattended run, started from Slack | Ends on its own limit or a clean stop, arm at HOME |
+
+```bash
+./scripts/run_classical.sh up                     # perception + task nodes; loader already in commanded EE
+./scripts/run_classical.sh collect --object can --cycles 20 --speed 0.5 --no-record
+./scripts/run_classical.sh collect --object can --hours 1 --speed 0.5
+./scripts/run_classical.sh collect --object can --hours 2 --detach   # background container
+./scripts/run_classical.sh collect-stop          # Ctrl-C it: cancel, HOME, summary.json
+```
+
+`--dry-run` sends dry-run goals, so the loop, its metadata and its stop rules run with
+nothing moving.
+
+### Starting And Stopping From Slack
+
+`fm.json` at the repo root mounts the `fm tactile-collect` verb
+(`scripts/run/tactile-collect.sh`). With `--host` it runs on the robot over
+`ssh -o BatchMode=yes`, against the checkout at `$ANVIL_EMBODIED_AI_DIR`
+(default `~/anvil-embodied-ai`).
+
+```bash
+fm tactile-collect start --object can --hours 2 --host fm-rob-01   # prints the run id
+fm tactile-collect status --json --host fm-rob-01
+fm tactile-collect stop --host fm-rob-01
+```
+
+`start` refuses with exit 3 and a fix message unless the classical nodes are up, the
+loader is active in commanded-EE mode, all four `/gripper/tactile/*` topics have a
+publisher, the empty-table background exists, free disk is above the guard, no loop is
+running, and the G2 marker exists. Exit codes: 0 done, 1 unhealthy, 2 usage,
+3 precondition.
 
 ## Calibrating The Chest Camera
 
@@ -217,6 +320,13 @@ besides the webapp e-stop.
   unexplained drift as a joint-limit problem and stop.
 - Run a dry run first, then the first live trial at `--speed 0.5` with a hand on the
   e-stop. Stand clear of the arm.
+- An unattended collection run has no hand on the e-stop. Its protection is the stop
+  rules, the G2 gate in front of `tactile-collect start`, and the ramp above. Every
+  sampled place point lies inside the pick region and is clamped into the workspace box
+  again by the task node, because the loader does not reject an unreachable pose.
+- On a stop rule, Ctrl-C, SIGTERM or an exception, a collection run sends a HOME goal
+  that a second Ctrl-C does not cancel. `docker stop` sends SIGINT with a 3-minute grace
+  period for the same reason. A SIGKILL or a power loss skips the HOME move.
 
 ## Tests
 

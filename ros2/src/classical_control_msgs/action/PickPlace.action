@@ -6,6 +6,20 @@ bool dry_run
 # Scales every segment's speed limit. 1.0 is the configured v_max; values are
 # clamped to (0, 1].
 float64 speed_scale
+# Place at place_target (world frame; only x and y are used) instead of on the
+# detected paper; no paper is needed. The xy is clamped into the workspace box.
+bool place_target_set
+geometry_msgs/Point place_target
+# Metres added to both grasp and place height. Clamped to +-max_grasp_dz_m.
+float64 grasp_dz
+# Finger position commanded at CLOSE, in metres. Non-positive means the
+# configured gripper_closed_m; otherwise clamped into the gripper range.
+float64 closure_width
+# Radians about world z added to the grasp orientation from pre-grasp to
+# retreat; HOME is unchanged. Clamped to +-max_yaw_offset_rad.
+float64 yaw_offset
+# Only move HOME with the gripper at gripper_home_m; no can or paper is needed.
+bool home_only
 ---
 # Result
 int8 SUCCESS=0

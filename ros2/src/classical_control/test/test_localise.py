@@ -10,6 +10,7 @@ import pytest
 from classical_control.camera_model import FisheyeCamera, pose_to_matrix, project_points
 from classical_control.localise import (
     ChestCameraConfig,
+    live_parameter_error,
     locate_can,
     locate_paper,
     paper_yaw,
@@ -145,3 +146,23 @@ def test_pick_region_mask_covers_inside_and_excludes_outside():
 def test_pick_region_must_be_ordered():
     with pytest.raises(ValueError, match="pick region"):
         pick_region_mask(CAMERA, T_WORLD_OPTICAL, (0.4, 0.0), (0.2, 0.1), heights=(TABLE_Z,))
+
+
+def test_live_can_height_change_is_accepted() -> None:
+    assert live_parameter_error({"can_height": 0.12}) is None
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"table_z": 0.2},
+        {"can_height": 0.12, "table_z": 0.2},
+        {"can_height": 0.0},
+        {"can_height": -0.1},
+        {"can_height": float("nan")},
+        {"can_height": "tall"},
+        {"can_height": True},
+    ],
+)
+def test_live_change_to_anything_else_is_refused(updates) -> None:
+    assert live_parameter_error(updates) is not None
