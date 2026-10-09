@@ -11,6 +11,9 @@ services:
     # move and summary, so `docker stop` never kills the arm mid-motion.
     stop_signal: SIGINT
     stop_grace_period: 3m
+    # Back after a robot reboot, so an unattended setup needs no one to run `up`. The nodes
+    # only wait for goals, so coming back moves nothing.
+    restart: unless-stopped
     network_mode: host
     ipc: host
     environment:
