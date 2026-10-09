@@ -28,12 +28,13 @@
     # Clearance kept between TCP and table, in metres.
     z_margin_m: 0.01
 
-    # Largest step allowed between two commands. 10 mm at 30 Hz is 0.30 m/s, above
-    # v_max_mps x max_speed_scale (0.20 m/s), so it only binds if the planner misbehaves.
+    # Largest step allowed between two commands. 15 mm at 30 Hz is 0.45 m/s, above
+    # v_max_mps x max_speed_scale (0.30 m/s), so it only binds if the planner misbehaves.
     # task_node refuses to start if the two are paired the other way round.
-    max_position_step_m: 0.010
-    # Largest rotation between two commands. 0.05 rad at 30 Hz is 1.5 rad/s, above w_max_radps.
-    max_rotation_step_rad: 0.05
+    max_position_step_m: 0.015
+    # Largest rotation between two commands. 0.075 rad at 30 Hz is 2.25 rad/s, above
+    # w_max_radps x max_speed_scale (1.5 rad/s).
+    max_rotation_step_rad: 0.075
 
     # Finger range the gripper command is clamped into (closed, open).
     gripper_min_m: 0.0
@@ -45,11 +46,11 @@
     v_max_mps: 0.10
     # Peak angular speed at speed_scale 1.0, rad/s.
     w_max_radps: 0.5
-    # Largest speed_scale a goal may ask for, from any host on the ROS domain. 1.0 is the
-    # fastest validated on fm-rob-01; 2.0 is allowed for attended speed tests and is not yet
-    # validated, so test above 1.0 only with a hand on the e-stop. Keep v_max_mps x this
+    # Largest speed_scale a goal may ask for, from any host on the ROS domain. 3.0 ran cleanly
+    # on fm-rob-01 (2026-10-09); collection defaults to 2.5. Test anything faster attended,
+    # with a hand on the e-stop. Keep v_max_mps x this
     # under max_position_step_m x control_rate_hz, which task_node checks at startup.
-    max_speed_scale: 2.0
+    max_speed_scale: 3.0
 
     # Height above grasp/place for pre-grasp, lift, transit and retreat, in metres. Must clear
     # the can top on the way in and the can bottom over the paper edge.
