@@ -61,6 +61,7 @@ from .task_machine import (
     mined_targets,
     place_target_in_workspace,
     required_detections,
+    speed_ceiling_error,
 )
 from .trajectory import Pose
 
@@ -86,7 +87,7 @@ PARAMETER_DEFAULTS = {
     "workspace_max_m": [0.65, 0.15, 0.70],
     "table_z": 0.207,
     "z_margin_m": 0.01,
-    "max_position_step_m": 0.005,
+    "max_position_step_m": 0.010,
     "max_rotation_step_rad": 0.05,
     "gripper_min_m": 0.0,
     "gripper_max_m": 0.05,
@@ -99,6 +100,7 @@ PARAMETER_DEFAULTS = {
     "max_grasp_dz_m": 0.02,
     "max_yaw_offset_rad": 0.35,
     "max_closure_m": 0.010,
+    "max_speed_scale": 1.0,
     "close_dwell_s": 1.0,
     "open_dwell_s": 0.8,
     "gripper_open_m": 0.05,
@@ -141,6 +143,9 @@ class PickPlaceNode(Node):
         self._rate_hz = float(param["control_rate_hz"])
         self._limiter = SafetyLimiter(SafetyLimits.from_dict({k: param[k] for k in SAFETY_KEYS}))
         self._config = self._load_task_config(param)
+        ceiling = speed_ceiling_error(self._config, self._limiter.limits)
+        if ceiling is not None:
+            raise ValueError(f"Refusing to start: {ceiling}")
         self._max_grasp_dz_m = float(param["max_grasp_dz_m"])
         self._max_yaw_offset_rad = float(param["max_yaw_offset_rad"])
         self._max_closure_m = float(param["max_closure_m"])
@@ -216,6 +221,7 @@ class PickPlaceNode(Node):
             gripper_closed_m=float(param["gripper_closed_m"]),
             gripper_home_m=float(param["gripper_home_m"]),
             grasp_missed_threshold_m=float(param["grasp_missed_threshold_m"]),
+            max_speed_scale=float(param["max_speed_scale"]),
         )
 
     # ---- subscriptions -----------------------------------------------------

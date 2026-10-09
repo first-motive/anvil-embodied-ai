@@ -4,7 +4,7 @@
 # Log the planned waypoints and publish nothing to the arm.
 bool dry_run
 # Scales every segment's speed limit. 1.0 is the configured v_max; values are
-# clamped to (0, 1].
+# clamped to [0.1, max_speed_scale], a task_node parameter.
 float64 speed_scale
 # Place at place_target (world frame; only x and y are used) instead of on the
 # detected paper; no paper is needed. The xy is clamped into the workspace box.

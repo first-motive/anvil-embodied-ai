@@ -50,7 +50,7 @@ cancel, stale input or hardware stop in any phase → HOLD the last command → 
 | Field | Type | Meaning |
 |---|---|---|
 | Goal `dry_run` | bool | Plan and log the waypoints; publish nothing to the arm |
-| Goal `speed_scale` | float64 | Scales `v_max_mps` and `w_max_radps`. Clamped to [0.1, 1]; 0 (the default) runs at full configured speed; NaN is rejected |
+| Goal `speed_scale` | float64 | Scales `v_max_mps` and `w_max_radps`. Clamped to [0.1, `max_speed_scale`]; 0 (the default) runs at 1.0; NaN is rejected |
 | Goal `place_target_set`, `place_target` | bool, Point | Place at this `world` xy instead of on the paper; skips the paper checks. xy clamped into the workspace box |
 | Goal `grasp_dz` | float64 | Metres added to grasp and place height. Clamped to ±`max_grasp_dz_m` |
 | Goal `closure_width` | float64 | Finger position commanded at CLOSE. 0 (the default) uses `gripper_closed_m`; otherwise clamped to [`gripper_min_m`, `max_closure_m`] |
@@ -107,9 +107,10 @@ runs, and nothing otherwise.
 | `control_rate_hz` | double | 30.0 | |
 | `workspace_min_m`, `workspace_max_m` | double[3] | [0.05, -0.55, 0.0], [0.65, 0.15, 0.70] | TCP box; all 104 demo positions fall inside it |
 | `table_z`, `z_margin_m` | double | 0.207, 0.01 | TCP floor is `table_z + z_margin_m`; `table_z` is measured |
-| `max_position_step_m`, `max_rotation_step_rad` | double | 0.005, 0.05 | Per-tick clamp; 0.15 m/s at 30 Hz |
+| `max_position_step_m`, `max_rotation_step_rad` | double | 0.010, 0.05 | Per-tick clamp; 0.30 m/s and 1.5 rad/s at 30 Hz. The node refuses to start if the fastest goal would step past it |
 | `gripper_min_m`, `gripper_max_m` | double | 0.0, 0.05 | |
 | `v_max_mps`, `w_max_radps` | double | 0.10, 0.5 | Peak segment speeds before `speed_scale` |
+| `max_speed_scale` | double | 2.0 | Largest `speed_scale` a goal may ask for |
 | `approach_height_m` | double | 0.08 | Clearance for pre-grasp, lift, transit and retreat |
 | `grasp_height_offset_m` | double | −0.035 | Added to the demos' grasp and place heights; grips below the can's neck |
 | `level_grasp` | bool | true | Stands the mined grasp's most vertical tool axis upright, so the can is carried and released upright |
