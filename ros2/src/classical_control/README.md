@@ -247,16 +247,28 @@ nothing moving.
 
 ### Starting And Stopping From Slack
 
-`fm.json` at the repo root mounts the `fm tactile-collect` verb
-(`scripts/run/tactile-collect.sh`). With `--host` it runs on the robot over
-`ssh -o BatchMode=yes`, against the checkout at `$ANVIL_EMBODIED_AI_DIR`
-(default `~/anvil-embodied-ai`).
+Slack, Desktop and any fleet machine reach the loop through fm-robot-agent's `collect`
+verb over the fleet fabric. The agent on the robot runs `scripts/run/tactile-collect.sh`
+from the checkout at `$FM_ANVIL_EMBODIED_AI_DIR` (default `~/anvil-embodied-ai`).
+
+```
+Slack / Desktop ──fm robot──▶ Zenoh router ──▶ fm-robot-agent on fm-rob-01
+                                                  └─▶ scripts/run/tactile-collect.sh ──▶ run_classical.sh collect --detach
+```
 
 ```bash
-fm tactile-collect start --object can --hours 2 --host fm-rob-01   # prints the run id
-fm tactile-collect status --json --host fm-rob-01
-fm tactile-collect stop --host fm-rob-01
+fm robot fm-rob-01 collect start --object can --hours 2   # prints the run id; speed defaults to 2.5
+fm robot fm-rob-01 collect status
+fm robot fm-rob-01 collect stop                           # Ctrl-C the loop: HOME, summary.json
 ```
+
+A fabric start moves the arm, so the agent refuses it until an operator arms the robot
+locally: `touch ~/.local/state/fm-robot-agent/collect-start-enabled` on fm-rob-01, and
+`rm` the same file to disarm. Stop and status always work. The fabric caps speed at 3.0
+and hours at 12; the fm-robot-agent README has the rest.
+
+On the robot itself, `scripts/run/tactile-collect.sh start|stop|status [--json]` does the
+same without the fabric.
 
 `start` refuses with exit 3 and a fix message unless the classical nodes are up, the
 loader is active in commanded-EE mode, the empty-table background exists, free disk is
