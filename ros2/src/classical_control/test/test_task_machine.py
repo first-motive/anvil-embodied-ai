@@ -14,6 +14,7 @@ from classical_control.task_machine import (
     TaskConfig,
     effective_speed_scale,
     goal_overrides,
+    level_orientation,
     mined_targets,
     place_target_in_workspace,
     plan_steps,
@@ -368,3 +369,36 @@ def test_home_only_dry_run_commands_nothing(config, limiter):
 )
 def test_required_detections_follow_the_goal(home_only, place_target_set, needed):
     assert required_detections(home_only=home_only, place_target_set=place_target_set) == needed
+
+
+#: The demos' median grasp on fm-rob-01, whose up axis leans 15.7 degrees.
+MINED_GRASP = (-0.728, -0.299, -0.597, 0.157)
+
+
+def test_level_orientation_stands_the_up_axis_upright():
+    levelled, tilt = level_orientation(MINED_GRASP)
+    up = Rotation.from_quat(levelled).as_matrix()[:, 0]
+    np.testing.assert_allclose(up, (0.0, 0.0, 1.0), atol=1e-9)
+    assert np.degrees(tilt) == pytest.approx(15.7, abs=0.1)
+
+
+def test_level_orientation_turns_only_by_the_up_axis_tilt():
+    up_tilt = np.arccos(Rotation.from_quat(MINED_GRASP).as_matrix()[2, 0])
+    levelled, tilt = level_orientation(MINED_GRASP)
+    turned = (Rotation.from_quat(levelled) * Rotation.from_quat(MINED_GRASP).inv()).magnitude()
+    assert tilt == pytest.approx(up_tilt)
+    assert turned == pytest.approx(up_tilt)
+
+
+def test_level_orientation_stands_a_downward_axis_straight_down():
+    upside_down = (Rotation.from_euler("y", np.pi) * Rotation.from_quat(MINED_GRASP)).as_quat()
+    levelled, _ = level_orientation(upside_down)
+    down = Rotation.from_quat(levelled).as_matrix()[:, 0]
+    np.testing.assert_allclose(down, (0.0, 0.0, -1.0), atol=1e-9)
+
+
+def test_level_orientation_leaves_a_level_grasp_alone():
+    level = Rotation.from_euler("z", 0.7).as_quat()
+    levelled, tilt = level_orientation(level)
+    assert tilt == 0.0
+    np.testing.assert_allclose(levelled, level)
