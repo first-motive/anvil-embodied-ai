@@ -55,6 +55,11 @@
     # body. Place moves with it, so the can still lands on the paper.
     grasp_height_offset_m: -0.035
 
+    # Stand the mined grasp orientation's most vertical tool axis exactly upright. The demos'
+    # median grasp leans 15.7 degrees; a side grasp squeezes the can into line with the
+    # fingers, so it was carried leaning and fell on release.
+    level_grasp: true
+
     # Offset (x, y) added to the detected can centre to get the TCP grasp xy, in metres.
     # Mined data puts TCP xy at close on the can xy, so zero until perception shows a bias.
     can_xy_bias_m: [0.0, 0.0]

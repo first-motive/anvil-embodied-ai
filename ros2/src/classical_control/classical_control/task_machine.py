@@ -23,7 +23,8 @@ what it returns. Three robot facts shape it:
   never a planned one, so starting never jumps.
 - An unreachable pose makes the IK drift silently rather than fail. Every
   waypoint uses the mined grasp orientation (the one the demonstrations proved
-  reachable) and must pass the workspace check before anything moves.
+  reachable), stood upright by `level_orientation`, and must pass the workspace
+  check before anything moves.
 - HOME is a commanded move to the stored home pose, not a call to the arms
   resetter, so it is just the last segment of the stream.
 """
@@ -217,6 +218,30 @@ def required_detections(*, home_only: bool, place_target_set: bool) -> tuple[str
     if home_only:
         return ()
     return ("can",) if place_target_set else ("can", "paper")
+
+
+def level_orientation(quat_xyzw: Sequence[float]) -> tuple[tuple[float, ...], float]:
+    """Turn a grasp so its most vertical tool axis is exactly vertical.
+
+    The mined orientation is the median of teleoperated grasps, which leaned about 16
+    degrees. In a side grasp the squeezed can lines up with the fingers, so it was carried
+    leaning and fell when released. The smallest rotation that stands that axis upright
+    leaves the approach heading close to the demonstrated one.
+
+    Returns:
+        The levelled quaternion (x, y, z, w) and the tilt removed, in radians.
+    """
+    rotation = Rotation.from_quat(quat_xyzw)
+    axes = rotation.as_matrix()
+    column = int(np.argmax(np.abs(axes[2])))
+    axis = axes[:, column]
+    upright = np.array([0.0, 0.0, math.copysign(1.0, axis[2])])
+    cross = np.cross(axis, upright)
+    tilt = math.atan2(np.linalg.norm(cross), float(np.dot(axis, upright)))
+    if tilt < 1e-9:
+        return tuple(float(v) for v in quat_xyzw), 0.0
+    correction = Rotation.from_rotvec(cross / np.linalg.norm(cross) * tilt)
+    return tuple(float(v) for v in (correction * rotation).as_quat()), tilt
 
 
 def mined_targets(

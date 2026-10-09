@@ -57,6 +57,7 @@ from .task_machine import (
     PickPlaceTask,
     TaskConfig,
     goal_overrides,
+    level_orientation,
     mined_targets,
     place_target_in_workspace,
     required_detections,
@@ -93,6 +94,7 @@ PARAMETER_DEFAULTS = {
     "w_max_radps": 0.5,
     "approach_height_m": 0.08,
     "grasp_height_offset_m": -0.035,
+    "level_grasp": True,
     "can_xy_bias_m": [0.0, 0.0],
     "max_grasp_dz_m": 0.02,
     "max_yaw_offset_rad": 0.35,
@@ -195,6 +197,9 @@ class PickPlaceNode(Node):
             yaml.safe_load(Path(path).expanduser().read_text()),
             float(param["grasp_height_offset_m"]),
         )
+        if param["level_grasp"]:
+            quat, tilt = level_orientation(quat)
+            self.get_logger().info(f"Grasp orientation levelled by {math.degrees(tilt):.1f} deg")
         return TaskConfig(
             grasp_z_m=grasp_z,
             place_z_m=place_z,
