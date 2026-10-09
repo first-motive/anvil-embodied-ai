@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
 import numpy as np
 import pytest
+from classical_control.calibrate_chest import limiter_from_params, load_task_params
 from classical_control.safety import SafetyLimiter, SafetyLimits
 from classical_control.task_machine import (
     MIN_SPEED_SCALE,
@@ -19,10 +23,12 @@ from classical_control.task_machine import (
     place_target_in_workspace,
     plan_steps,
     required_detections,
+    speed_ceiling_error,
 )
 from classical_control.trajectory import Pose
 from scipy.spatial.transform import Rotation
 
+CONFIG = Path(__file__).resolve().parents[1] / "config"
 RATE_HZ = 30.0
 DT = 1.0 / RATE_HZ
 GRASP_QUAT = (0.672, 0.064, 0.736, 0.055)
@@ -402,3 +408,51 @@ def test_level_orientation_leaves_a_level_grasp_alone():
     levelled, tilt = level_orientation(level)
     assert tilt == 0.0
     np.testing.assert_allclose(levelled, level)
+
+
+def test_speed_scale_may_reach_the_configured_ceiling():
+    assert effective_speed_scale(2.0, max_scale=2.0) == 2.0
+    assert effective_speed_scale(3.0, max_scale=2.0) == 2.0
+
+
+def test_a_fast_goal_moves_faster(config, limiter):
+    fast = PickPlaceTask(replace(config, max_speed_scale=2.0), limiter, CAN, PAPER, speed_scale=2.0)
+    assert fast.speed_limits == pytest.approx((2 * config.v_max_mps, 2 * config.w_max_radps))
+
+
+def test_shipped_task_yaml_leaves_the_clamp_above_the_fastest_goal(config):
+    params = load_task_params(CONFIG / "task.yaml")
+    shipped = replace(
+        config,
+        v_max_mps=params["v_max_mps"],
+        w_max_radps=params["w_max_radps"],
+        rate_hz=params["control_rate_hz"],
+        max_speed_scale=params["max_speed_scale"],
+    )
+    assert speed_ceiling_error(shipped, limiter_from_params(params).limits) is None
+
+
+def test_a_default_goal_respects_a_ceiling_below_one():
+    assert effective_speed_scale(0.0, max_scale=0.5) == 0.5
+
+
+@pytest.mark.parametrize("bad", [float("nan"), 0.0, -1.0, 0.05])
+def test_a_nonsense_ceiling_is_refused(config, limiter, bad):
+    error = speed_ceiling_error(replace(config, max_speed_scale=bad), limiter.limits)
+    assert error is not None and "max_speed_scale" in error
+
+
+@pytest.mark.parametrize(
+    ("step_m", "turn_rad", "names"),
+    [(0.005, 0.05, "max_position_step_m"), (0.010, 0.02, "max_rotation_step_rad")],
+)
+def test_a_ceiling_past_the_clamp_is_refused(config, step_m, turn_rad, names):
+    limits = SafetyLimits(
+        workspace_min_m=(0.05, -0.55, 0.0),
+        workspace_max_m=(0.65, 0.15, 0.70),
+        table_z=0.207,
+        max_position_step_m=step_m,
+        max_rotation_step_rad=turn_rad,
+    )
+    error = speed_ceiling_error(replace(config, max_speed_scale=2.0), limits)
+    assert error is not None and names in error

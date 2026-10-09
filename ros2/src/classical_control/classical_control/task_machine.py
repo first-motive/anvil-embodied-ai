@@ -99,6 +99,8 @@ class TaskConfig:
         gripper_home_m: Finger position commanded on the way home.
         grasp_missed_threshold_m: Finger position below which a close is empty. With a
             goal's closure override it is measured above that closure instead of zero.
+        max_speed_scale: Largest speed_scale a goal may ask for; v_max and w_max are
+            multiplied by it at most.
     """
 
     grasp_z_m: float
@@ -116,6 +118,7 @@ class TaskConfig:
     gripper_closed_m: float = 0.0
     gripper_home_m: float = 0.045
     grasp_missed_threshold_m: float = 0.008
+    max_speed_scale: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -265,8 +268,8 @@ def mined_targets(
     return grasp_z, place_z, quat
 
 
-def effective_speed_scale(speed_scale: float) -> float:
-    """Clamp a goal's speed scale into [MIN_SPEED_SCALE, 1].
+def effective_speed_scale(speed_scale: float, max_scale: float = 1.0) -> float:
+    """Clamp a goal's speed scale into [MIN_SPEED_SCALE, max_scale].
 
     A non-positive value means the field was left at its message default, so it
     runs at the configured speed rather than being refused.
@@ -278,8 +281,32 @@ def effective_speed_scale(speed_scale: float) -> float:
     if math.isnan(speed_scale):
         raise ValueError("speed_scale must not be NaN")
     if speed_scale <= 0.0:
-        return 1.0
-    return float(np.clip(speed_scale, MIN_SPEED_SCALE, 1.0))
+        return min(1.0, max_scale)
+    return float(np.clip(speed_scale, MIN_SPEED_SCALE, max_scale))
+
+
+def speed_ceiling_error(config: TaskConfig, limits: SafetyLimits) -> str | None:
+    """Why the fastest allowed goal would outrun the per-tick clamp, or None.
+
+    The clamp is meant to bind only when the planner misbehaves. If a planned segment
+    at max_speed_scale already steps further per tick than it allows, every fast move
+    is cut into short jerks instead of refused, so the pairing is checked at startup.
+    """
+    if not (math.isfinite(config.max_speed_scale) and config.max_speed_scale >= MIN_SPEED_SCALE):
+        return f"max_speed_scale must be a number of at least {MIN_SPEED_SCALE}"
+    fastest_step = config.v_max_mps * config.max_speed_scale / config.rate_hz
+    if fastest_step > limits.max_position_step_m:
+        return (
+            f"v_max_mps x max_speed_scale steps {fastest_step * 1000:.1f} mm per tick, past "
+            f"max_position_step_m ({limits.max_position_step_m * 1000:.1f} mm)"
+        )
+    fastest_turn = config.w_max_radps * config.max_speed_scale / config.rate_hz
+    if fastest_turn > limits.max_rotation_step_rad:
+        return (
+            f"w_max_radps x max_speed_scale turns {fastest_turn:.3f} rad per tick, past "
+            f"max_rotation_step_rad ({limits.max_rotation_step_rad:.3f} rad)"
+        )
+    return None
 
 
 def plan_steps(
@@ -390,7 +417,7 @@ class PickPlaceTask:
         self._config = config
         self._steps = steps
         self._missed_below_m = missed_below_m
-        scale = effective_speed_scale(speed_scale)
+        scale = effective_speed_scale(speed_scale, config.max_speed_scale)
         self._v_max = config.v_max_mps * scale
         self._w_max = config.w_max_radps * scale
 
