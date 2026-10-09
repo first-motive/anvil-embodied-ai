@@ -22,7 +22,10 @@ SCRIPT = REPO / "scripts" / "run" / "tactile-collect.sh"
 
 DOCKER = """#!/bin/sh
 case "$1" in
-  inspect) [ "$4" = classical-control ] && echo "$NODES_UP" || echo "$LOOP_UP" ;;
+  inspect)
+    if [ "$4" = classical-control ]; then echo "$NODES_UP"
+    elif [ -f "$LOOP_FLAG" ]; then echo true
+    else echo "$LOOP_UP"; fi ;;
   exec) echo "$ROS_VERDICT" ;;
 esac
 """
@@ -36,6 +39,7 @@ exec "$@"
 """
 RUN_CLASSICAL = """#!/bin/sh
 echo "$@" >> "$(dirname "$0")/run_classical.calls"
+[ -n "$STARTS_LOOP" ] && touch "$LOOP_FLAG"
 exit "${RUN_CLASSICAL_RC:-0}"
 """
 
@@ -75,6 +79,8 @@ def run(checkout: Path, *args: str, **env: str) -> subprocess.CompletedProcess[s
         "LOOP_UP": "false",
         "ROS_VERDICT": "tactile 4",
         "FREE_GB": "120",
+        "LOOP_FLAG": str(checkout.parent / "loop.up"),
+        "STARTS_LOOP": "",
         **env,
     }
     script = checkout / "scripts" / "run" / SCRIPT.name
@@ -104,6 +110,17 @@ def test_usage_errors_exit_2(checkout, args):
     assert run(checkout, *args).returncode == 2
 
 
+def test_help_prints_the_header_and_no_code(checkout):
+    result = run(checkout, "--help")
+    assert result.returncode == 0
+    assert result.stdout.startswith("tactile-collect.sh")
+    assert "set -uo" not in result.stdout
+
+
+def test_status_carries_an_empty_warnings_list(checkout):
+    assert json.loads(run(checkout, "status", "--json").stdout)["warnings"] == []
+
+
 def test_status_reports_the_latest_run(checkout):
     run_dir = checkout / "data" / "classical" / "collect" / "20261008T130000Z"
     for name, status in (("0001", "success"), ("0002", "failure"), ("0003", "success")):
@@ -129,13 +146,11 @@ def test_status_reports_the_latest_run(checkout):
     ("removed", "env", "code"),
     [
         (None, {"LOOP_UP": "true"}, "already_running"),
-        ("data/classical/collect/.g2_passed", {}, "no_g2"),
         (None, {"NODES_UP": "false"}, "nodes_down"),
         ("data/classical/chest_background.png", {}, "no_background"),
         (None, {"FREE_GB": "40"}, "disk"),
         (None, {"ROS_VERDICT": "hardware_inactive"}, "hardware_inactive"),
         (None, {"ROS_VERDICT": "not_commanded_ee"}, "not_commanded_ee"),
-        (None, {"ROS_VERDICT": "tactile 3"}, "tactile_silent"),
     ],
 )
 def test_each_precondition_refuses_start_with_exit_3(checkout, removed, env, code):
@@ -146,6 +161,34 @@ def test_each_precondition_refuses_start_with_exit_3(checkout, removed, env, cod
     assert result.returncode == 3
     assert refusal(result) == code
     assert not (checkout / "scripts" / "run_classical.calls").exists()
+
+
+def test_clean_start_reports_the_run_and_no_warnings(checkout):
+    result = run(checkout, "start", "--object", "can", "--json", STARTS_LOOP="1")
+
+    assert result.returncode == 0
+    reply = json.loads(result.stdout)
+    assert reply["ok"] is True
+    assert reply["warnings"] == []
+    assert reply["data"]["active"] is True
+
+
+def test_missing_tactile_and_g2_warn_but_start(checkout):
+    (checkout / "data/classical/collect/.g2_passed").unlink()
+    result = run(
+        checkout, "start", "--object", "can", "--json", STARTS_LOOP="1", ROS_VERDICT="tactile 3"
+    )
+
+    assert result.returncode == 0
+    codes = [warning["code"] for warning in json.loads(result.stdout)["warnings"]]
+    assert codes == ["no_g2", "tactile_silent"]
+
+
+def test_warnings_go_to_stderr_in_text_mode(checkout):
+    result = run(checkout, "start", "--object", "can", STARTS_LOOP="1", ROS_VERDICT="tactile 0")
+
+    assert result.returncode == 0
+    assert "warning: 0 of 4 /gripper/tactile/*" in result.stderr
 
 
 def test_unreachable_ros_is_unhealthy_not_a_precondition(checkout):

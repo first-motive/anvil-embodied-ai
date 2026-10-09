@@ -222,13 +222,15 @@ and uploading them is the team's process, not the loop's.
 
 ### Supervision Ramp
 
-Unattended runs are earned in three gates. Fix what each gate finds on a branch before
-moving on.
+A supervised run, with someone in the room to stand a fallen can back up, needs only G1.
+G2 and G3 are the ramp to unattended runs, and they are advisory: `start` warns while
+the G2 marker is missing but does not refuse, so whoever starts an unattended run owns
+that decision. Fix what each gate finds on a branch before moving on.
 
 | Gate | Run | Passes when |
 |---|---|---|
 | G1 | 20 cycles at `--speed 0.5`, attended: first `--no-record`, then recording | At least 18 succeed, and a recorded episode passes `mcap-valid` with the cameras and all four `/gripper/tactile/*` topics |
-| G2 | One hour recording, someone nearby but not watching | No unsafe event and the right stop reason logged. Then write the marker: `echo "$(date -u +%F) <run id>" > data/classical/collect/.g2_passed` |
+| G2 | One hour recording, someone nearby but not watching | No unsafe event and the right stop reason logged. Then write the marker: `echo "$(date -u +%F) <run id>" > data/classical/collect/.g2_passed`. Until it exists, `start` warns that someone must watch the run |
 | G3 | First unattended run, started from Slack | Ends on its own limit or a clean stop, arm at HOME |
 
 ```bash
@@ -256,10 +258,11 @@ fm tactile-collect stop --host fm-rob-01
 ```
 
 `start` refuses with exit 3 and a fix message unless the classical nodes are up, the
-loader is active in commanded-EE mode, all four `/gripper/tactile/*` topics have a
-publisher, the empty-table background exists, free disk is above the guard, no loop is
-running, and the G2 marker exists. Exit codes: 0 done, 1 unhealthy, 2 usage,
-3 precondition.
+loader is active in commanded-EE mode, the empty-table background exists, free disk is
+above the guard, and no loop is running. It starts but warns (`warnings` in the JSON,
+stderr in text) when fewer than four `/gripper/tactile/*` topics have a publisher, so
+episodes record without tactile, and when the G2 marker is missing, so someone must
+watch. Exit codes: 0 done, 1 unhealthy, 2 usage, 3 precondition.
 
 ## Calibrating The Chest Camera
 
@@ -322,7 +325,7 @@ besides the webapp e-stop.
 - Run a dry run first, then the first live trial at `--speed 0.5` with a hand on the
   e-stop. Stand clear of the arm.
 - An unattended collection run has no hand on the e-stop. Its protection is the stop
-  rules, the G2 gate in front of `tactile-collect start`, and the ramp above. Every
+  rules and the ramp above; `tactile-collect start` warns until the G2 marker exists. Every
   sampled place point lies inside the pick region and is clamped into the workspace box
   again by the task node, because the loader does not reject an unreachable pose.
 - On a stop rule, Ctrl-C, SIGTERM or an exception, a collection run sends a HOME goal

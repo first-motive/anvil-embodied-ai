@@ -11,18 +11,20 @@
 #   scripts/run/tactile-collect.sh status --host fm-rob-01     # from any machine, over ssh
 #
 # start runs a preflight and refuses (exit 3) unless: the classical nodes are up, the
-# loader is up with hardware active in commanded-EE mode, all four /gripper/tactile/*
-# topics have a publisher, the empty-table background is captured, free disk is above the
-# guard, no loop is already running, and data/classical/collect/.g2_passed exists (the
-# attended one-hour run has passed). It returns once the container is up, with the run id.
+# loader is up with hardware active in commanded-EE mode, the empty-table background is
+# captured, free disk is above the guard, and no loop is already running. It warns, and
+# starts anyway, when fewer than four /gripper/tactile/* topics have a publisher (episodes
+# record without tactile) or when data/classical/collect/.g2_passed is missing (no attended
+# hour has passed, so someone must watch the run). It returns once the container is up,
+# with the run id.
 #
 # Over --host the script runs on the robot against the checkout at $ANVIL_EMBODIED_AI_DIR
 # (default ~/anvil-embodied-ai). Exit 0 done, 1 unhealthy, 2 usage, 3 precondition.
 set -uo pipefail
 
-usage() { sed -n '2,20p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^set -/p' "${BASH_SOURCE[0]:-$0}" | sed -e '$d' -e 's/^# \{0,1\}//'; }
 
-HOST="" JSON=false ACTION="status" START_ARGS=()
+HOST="" JSON=false ACTION="status" START_ARGS=() WARNINGS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     start|stop|status) ACTION="$1"; shift ;;
@@ -81,9 +83,12 @@ in_nodes() {
   timeout 12 docker exec "$NODES" bash -c "source /opt/ros/jazzy/setup.bash && source /workspace/install/setup.bash && $1"
 }
 
-# Print the result and exit. Refusals carry a stable code for Desktop and Slack.
+# A condition start proceeds through but reports, as "code|detail".
+warn() { WARNINGS+=("$1|$2"); }
+
+# Print the result and exit. Refusals and warnings carry stable codes for Desktop and Slack.
 finish() {  # status(0|1|3)  code(ok|<refusal>)  detail
-  local status="$1" code="$2" detail="$3" run active=false cycles=0 successes=0 reason=""
+  local status="$1" code="$2" detail="$3" run active=false cycles=0 successes=0 reason="" warning sep=""
   run="$(latest_run)"
   running "$LOOP" && active=true
   if [ -n "$run" ]; then
@@ -94,11 +99,20 @@ finish() {  # status(0|1|3)  code(ok|<refusal>)  detail
   if $JSON; then
     printf '{"schema_version":1,"verb":"tactile-collect","host":"%s","ok":%s,' "$(json_escape "$(hostname)")" "$([ "$status" = 0 ] && echo true || echo false)"
     [ "$code" = ok ] || printf '"error":{"code":"%s","detail":"%s"},' "$code" "$(json_escape "$detail")"
+    printf '"warnings":['
+    for warning in "${WARNINGS[@]+"${WARNINGS[@]}"}"; do
+      printf '%s{"code":"%s","detail":"%s"}' "$sep" "${warning%%|*}" "$(json_escape "${warning#*|}")"
+      sep=,
+    done
+    printf '],'
     printf '"data":{"active":%s,"run":%s,"cycles":%s,"successes":%s,"stop_reason":%s,"free_gb":%s}}\n' \
       "$active" "$([ -n "$run" ] && echo "\"$(json_escape "$(basename "$run")")\"" || echo null)" "$cycles" "$successes" \
       "$([ -n "$reason" ] && [ "$reason" != null ] && echo "\"$(json_escape "$reason")\"" || echo null)" "$(free_gb)"
   else
     echo "loop: $($active && echo running || echo stopped)  run: ${run:+$(basename "$run")}  cycles: $cycles  successes: $successes  stop: ${reason:-–}  free: $(free_gb) GB"
+    for warning in "${WARNINGS[@]+"${WARNINGS[@]}"}"; do
+      echo "tactile-collect: warning: ${warning#*|}" >&2
+    done
     case "$status" in
       0) echo "tactile-collect: $detail" ;;
       3) echo "tactile-collect: refused: $detail" >&2 ;;
@@ -110,7 +124,7 @@ finish() {  # status(0|1|3)  code(ok|<refusal>)  detail
 
 preflight() {
   running "$LOOP" && finish 3 already_running "a collection loop is already running; stop it first"
-  [ -f "$G2_MARKER" ] || finish 3 no_g2 "no $G2_MARKER: pass the attended one-hour run (G2) before unattended starts"
+  [ -f "$G2_MARKER" ] || warn no_g2 "no attended hour has passed ($G2_MARKER is missing): someone must watch this run"
   running "$NODES" || finish 3 nodes_down "classical nodes are not up: $RUN_CLASSICAL up"
   [ -f "$BACKGROUND" ] || finish 3 no_background "no empty-table background: clear the table, then $RUN_CLASSICAL background"
   local free min
@@ -133,7 +147,7 @@ preflight() {
     hardware_inactive) finish 3 hardware_inactive "hardware is not active: restart the loader (fm robot fm-rob-01 up), then the classical nodes" ;;
     not_commanded_ee) finish 3 not_commanded_ee "loader is not in commanded-EE mode: fm robot fm-rob-01 mode $COMMANDED_EE_MODE" ;;
     "tactile "[4-9]*) ;;
-    "tactile "*) finish 3 tactile_silent "${verdict#tactile } of 4 /gripper/tactile/* topics have a publisher: bring the tactile container up" ;;
+    "tactile "*) warn tactile_silent "${verdict#tactile } of 4 /gripper/tactile/* topics have a publisher: episodes record without tactile" ;;
     *) finish 1 ros_unreachable "could not query ROS inside $NODES" ;;
   esac
 }
