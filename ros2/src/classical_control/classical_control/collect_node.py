@@ -252,7 +252,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-id", type=run_name, help="run directory; default UTC start time")
     parser.add_argument("--hours", type=float, help="stop starting cycles after this long")
     parser.add_argument("--cycles", type=int, help="stop after this many successful cycles")
-    parser.add_argument("--speed", type=float, default=0.5, help="PickPlace speed_scale")
+    parser.add_argument("--speed", type=float, default=2.5, help="PickPlace speed_scale")
     parser.add_argument("--no-record", action="store_true", help="write metadata, no MCAP")
     parser.add_argument("--dry-run", action="store_true", help="send dry_run goals; nothing moves")
     parser.add_argument("--seed", type=int, help="knob sampler seed, for a repeatable run")

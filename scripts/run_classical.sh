@@ -125,7 +125,8 @@ trial() {
 }
 
 collect() {
-    local object="" hours="" cycles="" speed=0.5 run_id="" detach=false
+    # 2.5 sits under the 3.0 validated on fm-rob-01, leaving a step of headroom.
+    local object="" hours="" cycles="" speed=2.5 run_id="" detach=false
     local flags=()
     while [ $# -gt 0 ]; do
         case "$1" in

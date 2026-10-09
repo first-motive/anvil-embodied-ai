@@ -46,9 +46,9 @@
     v_max_mps: 0.10
     # Peak angular speed at speed_scale 1.0, rad/s.
     w_max_radps: 0.5
-    # Largest speed_scale a goal may ask for, from any host on the ROS domain. 2.0 is the
-    # fastest validated on fm-rob-01 (2026-10-09); 3.0 is allowed for attended speed tests and
-    # is not yet validated, so test above 2.0 only with a hand on the e-stop. Keep v_max_mps x this
+    # Largest speed_scale a goal may ask for, from any host on the ROS domain. 3.0 ran cleanly
+    # on fm-rob-01 (2026-10-09); collection defaults to 2.5. Test anything faster attended,
+    # with a hand on the e-stop. Keep v_max_mps x this
     # under max_position_step_m x control_rate_hz, which task_node checks at startup.
     max_speed_scale: 3.0
 

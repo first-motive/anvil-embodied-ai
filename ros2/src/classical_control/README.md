@@ -230,14 +230,14 @@ that decision. Fix what each gate finds on a branch before moving on.
 
 | Gate | Run | Passes when |
 |---|---|---|
-| G1 | 20 cycles at `--speed 0.5`, attended: first `--no-record`, then recording | At least 18 succeed, and a recorded episode passes `mcap-valid` with the cameras and all four `/gripper/tactile/*` topics |
+| G1 | 20 cycles at the default speed (2.5), attended: first `--no-record`, then recording | At least 18 succeed, and a recorded episode passes `mcap-valid` with the cameras and all four `/gripper/tactile/*` topics |
 | G2 | One hour recording, someone nearby but not watching | No unsafe event and the right stop reason logged. Then write the marker: `echo "$(date -u +%F) <run id>" > data/classical/collect/.g2_passed`. Until it exists, `start` warns that someone must watch the run |
 | G3 | First unattended run, started from Slack | Ends on its own limit or a clean stop, arm at HOME |
 
 ```bash
 ./scripts/run_classical.sh up                     # perception + task nodes; loader already in commanded EE
-./scripts/run_classical.sh collect --object can --cycles 20 --speed 0.5 --no-record
-./scripts/run_classical.sh collect --object can --hours 1 --speed 0.5
+./scripts/run_classical.sh collect --object can --cycles 20 --no-record   # --speed defaults to 2.5
+./scripts/run_classical.sh collect --object can --hours 1
 ./scripts/run_classical.sh collect --object can --hours 2 --detach   # background container
 ./scripts/run_classical.sh collect-stop          # Ctrl-C it: cancel, HOME, summary.json
 ```
