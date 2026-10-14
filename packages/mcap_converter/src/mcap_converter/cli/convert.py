@@ -12,6 +12,7 @@ import shutil
 import stat
 import sys
 import time
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import List
@@ -42,6 +43,7 @@ from mcap_converter.cli.mcap_valid import default_report_paths
 from mcap_converter.core.extractor import BufferedStreamExtractor
 from mcap_converter.core.quality import SEVERITY_CRITICAL, SEVERITY_PASS, SEVERITY_WARNING
 from mcap_converter.core.reader import snap_fps
+from mcap_converter.core.skill_segments import ACTION_NAMES, STATE_NAMES, iter_skill_episodes
 
 console = Console()
 
@@ -284,6 +286,146 @@ def _ensure_output_readable(output_dir: str) -> None:
             continue
 
 
+def write_conversion_config(output_dir: str, config: DataConfig, config_path: str | None) -> str:
+    """
+    Save the conversion config, with git provenance, next to the dataset.
+
+    Inference generation reads it back during training. Returns its path.
+    """
+    import yaml
+
+    conversion_config_dest = os.path.join(output_dir, "conversion_config.yaml")
+    if config_path and os.path.exists(config_path):
+        shutil.copy(config_path, conversion_config_dest)
+        log(f"Copied conversion config: [dim]{conversion_config_dest}[/dim]")
+    else:
+        # Save config from DataConfig object
+        config_to_save = {
+            "robot_state_topic": config.robot_state_topic,
+            "joint_names": {
+                "separator": config.joint_name_pattern.separator,
+                "source": config.joint_name_pattern.source,
+                "arms": config.joint_name_pattern.arms,
+            },
+            "camera_topic_mapping": config.camera_topic_mapping,
+        }
+        if config.action_topics:
+            config_to_save["action_topics"] = config.action_topics
+        if config.skill_segments:
+            config_to_save["skill_segments"] = asdict(config.skill_segments)
+
+        with open(conversion_config_dest, "w") as f:
+            yaml.dump(
+                config_to_save,
+                f,
+                default_flow_style=False,
+            )
+        log(f"Saved conversion config: [dim]{conversion_config_dest}[/dim]")
+
+    provenance = git_provenance()
+    if provenance:
+        with open(conversion_config_dest, "a") as _f:
+            _f.write("\n# --- provenance ---\n")
+            yaml.dump(provenance, _f, default_flow_style=False)
+    return conversion_config_dest
+
+
+def convert_skill_session(
+    output_dir: str,
+    repo_id: str,
+    mcap_files: List[Path],
+    config: DataConfig,
+    robot_type: str = "anvil_openarm",
+    fps: int = 30,
+    task: str = "manipulation",
+    config_path: str | None = None,
+    vcodec: str | None = None,
+    quality_skip_paths: dict | None = None,
+    debug_plot_episodes: int = 5,
+):
+    """
+    Convert MCAP recordings to a dataset with one episode per skill segment.
+
+    Used when the config sets ``skill_segments``. Features are the TCP pose in
+    the handover frame and the gripper; see core/skill_segments.py.
+    """
+    seg_cfg = config.skill_segments
+    camera_names = list(config.camera_topic_mapping.values())
+    writer = LeRobotWriter(
+        output_dir=output_dir,
+        repo_id=repo_id,
+        robot_type=robot_type,
+        fps=fps,
+        config=config,
+        vcodec=vcodec,
+        quiet=True,
+    )
+    dataset = writer.create_dataset(
+        joint_names={},
+        camera_names=camera_names,
+        vector_names={"observation.state": STATE_NAMES, "action": ACTION_NAMES},
+    )
+    conversion_config_dest = write_conversion_config(output_dir, config, config_path)
+    log(
+        f"Cutting [bold]{seg_cfg.skill}[/bold] segments from {seg_cfg.event_topic} "
+        f"({'all outcomes' if seg_cfg.include_failures else 'successful and verified only'})"
+    )
+
+    table = Table(title="Skill Segments", title_style="bold", title_justify="left", padding=(0, 1))
+    for column in ("MCAP File", "Task Episode", "Code", "Verified", "Frames", "Kept"):
+        table.add_column(column)
+
+    skip_paths = quality_skip_paths or {}
+    total_frames = 0
+    for mcap_path in mcap_files:
+        if str(mcap_path.resolve()) in skip_paths:
+            log(f"[yellow]↷ {mcap_path.name} skipped (quality: {skip_paths[str(mcap_path.resolve())]})[/yellow]")
+            continue
+        for segment, frames in iter_skill_episodes(str(mcap_path), config, fps, task):
+            frame_count = 0
+            for frame in frames:
+                dataset.add_frame(frame)
+                frame_count += 1
+            kept = frame_count > 0
+            if kept:
+                with suppress_fd_output():
+                    dataset.save_episode()
+                total_frames += frame_count
+            table.add_row(
+                mcap_path.name,
+                str(segment.episode),
+                str(segment.code),
+                "yes" if segment.verified else "no",
+                str(frame_count),
+                "[green]yes[/green]" if kept else "[yellow]no (missing data)[/yellow]",
+            )
+    console.print(table)
+
+    if total_frames == 0:
+        console.print(
+            f"\n[bold red]ERROR: No {seg_cfg.skill} segments produced frames.[/bold red]\n"
+            f"Check that {seg_cfg.event_topic}, {seg_cfg.ee_pose_topic} and the camera topics "
+            "are recorded, and that the skill name matches the events.\n"
+        )
+        return dataset
+
+    with console.status("[bold]Finalizing dataset (metadata & cleanup)..."):
+        with suppress_fd_output():
+            writer.finalize(dataset)
+        _ensure_output_readable(output_dir)
+
+    if debug_plot_episodes > 0:
+        from mcap_converter.utils.debug_plot import plot_conversion_debug
+
+        plot_conversion_debug(output_dir, n_episodes=debug_plot_episodes, action_from_observation_n=1)
+
+    log(
+        f"[green]Created {dataset.meta.total_episodes} episodes, {total_frames} frames[/green] "
+        f"in [dim]{output_dir}[/dim] (config: [dim]{conversion_config_dest}[/dim])"
+    )
+    return dataset
+
+
 def convert_session(
     input_dir: str,
     output_dir: str,
@@ -388,44 +530,11 @@ def convert_session(
         )
 
     # Copy conversion config for inference generation during training (skip if resuming)
-    conversion_config_dest = os.path.join(output_dir, "conversion_config.yaml")
     if resume_from > 0:
+        conversion_config_dest = os.path.join(output_dir, "conversion_config.yaml")
         log(f"Skipping config copy — using existing [dim]{conversion_config_dest}[/dim]")
-    elif config_path and os.path.exists(config_path):
-        shutil.copy(config_path, conversion_config_dest)
-        log(f"Copied conversion config: [dim]{conversion_config_dest}[/dim]")
     else:
-        # Save config from DataConfig object
-        import yaml
-
-        config_to_save = {
-            "robot_state_topic": config.robot_state_topic,
-            "joint_names": {
-                "separator": config.joint_name_pattern.separator,
-                "source": config.joint_name_pattern.source,
-                "arms": config.joint_name_pattern.arms,
-            },
-            "camera_topic_mapping": config.camera_topic_mapping,
-        }
-        if config.action_topics:
-            config_to_save["action_topics"] = config.action_topics
-
-        with open(conversion_config_dest, "w") as f:
-            yaml.dump(
-                config_to_save,
-                f,
-                default_flow_style=False,
-            )
-        log(f"Saved conversion config: [dim]{conversion_config_dest}[/dim]")
-
-    # Append git provenance to conversion_config.yaml (skip when resuming — already present)
-    if resume_from == 0:
-        provenance = git_provenance()
-        if provenance:
-            import yaml
-            with open(conversion_config_dest, "a") as _f:
-                _f.write("\n# --- provenance ---\n")
-                yaml.dump(provenance, _f, default_flow_style=False)
+        conversion_config_dest = write_conversion_config(output_dir, config, config_path)
 
     # Process each MCAP file as one episode
     total_frames = 0
@@ -755,8 +864,8 @@ examples:
         help="timestamp sync tolerance in seconds (default: 0.001)",
     )
     parser.add_argument(
-        "--task", type=str, default="manipulation",
-        help="task name for the dataset (default: manipulation)",
+        "--task", type=str, default=None,
+        help="task name for the dataset (default: the skill_segments skill, else manipulation)",
     )
     parser.add_argument(
         "--push-to-hub", action="store_true",
@@ -854,6 +963,20 @@ examples:
     else:
         config = ConfigLoader.get_default()
         log("Using default configuration")
+
+    if config.skill_segments:
+        if args.resume:
+            # Resume counts converted episodes as MCAP files; skill mode has several per file.
+            console.print("[red]✗ --resume is not supported with skill_segments[/red]")
+            exit(1)
+        skill = config.skill_segments.skill
+        if args.task is None:
+            args.task = skill
+        elif args.task != skill:
+            log(f"[yellow]--task {escape(args.task)!r} differs from the skill being cut ({skill!r})[/yellow]")
+        log("[dim]--tolerance-s and --buffer-seconds are unused with skill_segments[/dim]")
+    elif args.task is None:
+        args.task = "manipulation"
 
     # ── Mandatory quality-report gate ──────────────────────────────────
     # mcap-convert refuses to run without a mcap-valid quality report (explicit
@@ -987,25 +1110,45 @@ examples:
         # Convert session
         log("[bold]Starting conversion...[/bold]")
 
-        dataset = convert_session(
-            input_dir=args.input_dir,
-            output_dir=args.output_dir,
-            repo_id=repo_id,
-            robot_type=args.robot_type,
-            fps=fps,
-            tolerance_s=args.tolerance_s,
-            task=args.task,
-            config=config,
-            buffer_seconds=args.buffer_seconds,
-            config_path=args.config,
-            vcodec=args.vcodec,
-            resume_from=resume_from,
-            max_episodes=args.max_episodes,
-            mcap_files=all_mcap_files,
-            debug_plot_episodes=args.debug_plot_episodes,
-            quality_skip_paths=quality_skip_paths,
-            skip_episode_indices=skip_episode_indices,
-        )
+        if config.skill_segments:
+            skill_files = [
+                f
+                for i, f in enumerate(all_mcap_files[: args.max_episodes])
+                if not skip_episode_indices or i + 1 not in skip_episode_indices
+            ]
+            dataset = convert_skill_session(
+                output_dir=args.output_dir,
+                repo_id=repo_id,
+                mcap_files=skill_files,
+                config=config,
+                robot_type=args.robot_type,
+                fps=fps,
+                task=args.task,
+                config_path=args.config,
+                vcodec=args.vcodec,
+                quality_skip_paths=quality_skip_paths,
+                debug_plot_episodes=args.debug_plot_episodes,
+            )
+        else:
+            dataset = convert_session(
+                input_dir=args.input_dir,
+                output_dir=args.output_dir,
+                repo_id=repo_id,
+                robot_type=args.robot_type,
+                fps=fps,
+                tolerance_s=args.tolerance_s,
+                task=args.task,
+                config=config,
+                buffer_seconds=args.buffer_seconds,
+                config_path=args.config,
+                vcodec=args.vcodec,
+                resume_from=resume_from,
+                max_episodes=args.max_episodes,
+                mcap_files=all_mcap_files,
+                debug_plot_episodes=args.debug_plot_episodes,
+                quality_skip_paths=quality_skip_paths,
+                skip_episode_indices=skip_episode_indices,
+            )
 
         # Upload to Hub if requested
         if args.push_to_hub:

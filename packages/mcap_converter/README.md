@@ -121,6 +121,61 @@ action_feature_mapping:
   others: []
 ```
 
+## Skill Segments in the Handover Frame
+
+For a learned skill trained on continuous fm-skills recordings, set
+`skill_segments` in the config
+(`configs/mcap_converter/openarm_single_handover_ee.yaml`). The converter then
+cuts one episode per `[SKILL_START, SKILL_END]` pair of the chosen skill on
+`/task/events` (`fm_skills_msgs/msg/TaskEvent`), and replaces the joint
+features with the TCP pose relative to the handover frame H, the TCP pose the
+SKILL_START event carries.
+
+```bash
+mcap-convert -i data/raw/my-session -o data/datasets \
+    --config configs/mcap_converter/openarm_single_handover_ee.yaml --fps 30
+```
+
+| Feature | Names | Meaning |
+|---------|-------|---------|
+| `observation.state` (8) | `x y z rx ry rz finger_width_m finger_effort` | TCP pose at t in H, finger position and effort at t |
+| `action` (7) | `x y z rx ry rz gripper` | TCP pose at t+1 in H; gripper target at t |
+| `observation.images.wrist_r` | | wrist camera; the first camera paces the frames |
+
+The frame convention:
+
+- Pose in H: `p = R_H⁻¹ (p_tcp − o_H)` and `r = rotvec(R_H⁻¹ R_tcp)`, with
+  o_H, R_H the origin and rotation of H. Relative to H the rotation starts at
+  zero and normally stays well inside pi, so the rotation vector is continuous
+  over a segment; a segment that turns past 2.5 rad is logged as a warning.
+  `pose_in_frame` and its inverse `pose_from_frame` in `core/frames.py`
+  implement it.
+- The action pose is the next frame's measured TCP in H, absolute, with the
+  same names as the state. Train with
+  `--action-type=delta_obs_t --delta-exclude-joints=gripper`: anvil-trainer's
+  delta transform then subtracts the observed pose from every row of the ACT
+  chunk by name, which is how the policy node applies a chunk at inference.
+  The gripper target stays absolute.
+- The gripper target is the `position` (m) of the last
+  `control_msgs/msg/GripperCommand` on `gripper_command_topic`
+  (`/motion/gripper`) published at or before t. Before the first command, or
+  when the topic is not recorded, it is the measured finger width at t+1; a
+  measured target alone never squeezes. GripperCommand has no header, so it
+  is aligned on MCAP log time while every other topic is aligned on its
+  header stamp.
+- The TCP pose comes from `/ee_pose_right` (`anvil_msgs/msg/CommandedEEPose`),
+  the finger from `follower_r_finger_joint1` in `/joint_states`.
+- Only segments that end with code 0 and `verified` are kept. With
+  `include_failures: true` the others are kept too, with task
+  `"<task> [failed]"`.
+- Frames sit on a `--fps` grid anchored at the segment's first camera frame.
+  Each segment is read within a log-time window 1 s wider than its stamps; a
+  warning is logged when header stamps and log times differ by more.
+- `--task` defaults to the skill name. `--tolerance-s` and `--buffer-seconds`
+  are unused in this mode.
+- `--resume` is not supported in this mode. `--max-episodes` and
+  `--skip-episode-idx` count MCAP files, not segments.
+
 ## Module Structure
 
 ```
@@ -129,6 +184,8 @@ mcap_converter/
 │   ├── reader.py      # MCAP file reading
 │   ├── extractor.py   # Data extraction & streaming
 │   ├── aligner.py     # Time synchronization
+│   ├── frames.py      # Poses relative to another frame
+│   ├── skill_segments.py # Skill segments in the handover frame
 │   └── writer.py      # LeRobot dataset writing
 ├── cli/
 │   ├── convert.py     # mcap-convert
