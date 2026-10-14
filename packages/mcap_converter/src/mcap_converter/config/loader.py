@@ -6,7 +6,13 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from .schema import ActionTopicConfig, DataConfig, FeatureMapping, JointNamePattern
+from .schema import (
+    ActionTopicConfig,
+    DataConfig,
+    FeatureMapping,
+    JointNamePattern,
+    SkillSegmentConfig,
+)
 
 
 class ConfigLoader:
@@ -251,6 +257,11 @@ class ConfigLoader:
             ),
             action_from_observation_n=config_dict.get(
                 "action_from_observation_n", defaults.action_from_observation_n
+            ),
+            skill_segments=(
+                SkillSegmentConfig(**config_dict["skill_segments"])
+                if config_dict.get("skill_segments")
+                else None
             ),
             observation_feature_mapping=observation_feature_mapping,
             action_feature_mapping=action_feature_mapping,

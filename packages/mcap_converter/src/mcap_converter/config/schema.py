@@ -1,7 +1,7 @@
 """Configuration schema for MCAP to LeRobot conversion"""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -102,6 +102,36 @@ class FeatureMapping:
 
 
 @dataclass
+class SkillSegmentConfig:
+    """
+    Configuration for cutting skill segments with end-effector features.
+
+    Each [SKILL_START, SKILL_END] pair of the chosen skill on event_topic becomes
+    one dataset episode. The TCP pose is expressed in the handover frame H, the
+    TCP pose carried by the SKILL_START event.
+    """
+
+    # Skill to cut, matched against TaskEvent.skill ("pick" or "place")
+    skill: str = "pick"
+
+    # fm_skills_msgs/TaskEvent topic
+    event_topic: str = "/task/events"
+
+    # Measured TCP pose (anvil_msgs/CommandedEEPose), same frame as H
+    ee_pose_topic: str = "/ee_pose_right"
+
+    # JointState entry in robot_state_topic giving gripper width and effort
+    gripper_joint: str = "follower_r_finger_joint1"
+
+    # control_msgs/GripperCommand finger commands; `position` (m) is the gripper
+    # target. Without it the target is the measured finger width one frame ahead.
+    gripper_command_topic: str = "/motion/gripper"
+
+    # Keep failed or unverified segments, labelled "<task> [failed]"
+    include_failures: bool = False
+
+
+@dataclass
 class DataConfig:
     """
     Manage parameters that can be dynamically adjusted during data conversion,
@@ -143,6 +173,9 @@ class DataConfig:
     # action[t] = observation[t + n]. Default: 10.
     action_from_observation_n: int = 10
 
+    # When set, episodes are skill segments with handover-frame EE features
+    # instead of whole MCAP files with joint features.
+    skill_segments: Optional[SkillSegmentConfig] = None
 
     # Separate feature mappings for observation vs action
     # This allows different features for input (observation) and output (action)

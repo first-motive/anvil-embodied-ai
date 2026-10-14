@@ -1,0 +1,76 @@
+# =============================================================================
+# OpenArm MCAP to LeRobot Conversion Configuration
+# =============================================================================
+# Mode: skill segments in the handover frame — SINGLE ARM (right only)
+#
+# For a learned skill trained on continuous fm-skills recordings. Each
+# [SKILL_START, SKILL_END] pair of `skill` on /task/events becomes one episode,
+# and the TCP pose is expressed in the handover frame H: the TCP pose carried
+# by the SKILL_START event.
+# For whole-recording joint-space datasets, see: openarm_single_quest.yaml
+# =============================================================================
+
+# Gripper width and effort come from this JointState topic
+robot_state_topic: "/joint_states"
+
+# Only used to parse joint names; skill mode reads the gripper joint by its
+# full name (skill_segments.gripper_joint)
+joint_names:
+  separator: "_"
+  source:
+    follower: observation
+  arms:
+    r: right
+
+
+# =============================================================================
+# Skill Segments
+# =============================================================================
+
+skill_segments:
+  # TaskEvent.skill to cut: "pick" or "place"
+  skill: "pick"
+  # fm_skills_msgs/TaskEvent
+  event_topic: "/task/events"
+  # Measured TCP pose (anvil_msgs/CommandedEEPose), in the frame of H
+  ee_pose_topic: "/ee_pose_right"
+  # Gripper width (position) and effort, from robot_state_topic
+  gripper_joint: "follower_r_finger_joint1"
+  # control_msgs/GripperCommand; its `position` (m) is the gripper target. If it
+  # is not recorded, the measured finger width one frame ahead is used instead.
+  gripper_command_topic: "/motion/gripper"
+  # Keep failed or unverified segments too, with task "<task> [failed]"
+  include_failures: false
+
+
+# =============================================================================
+# Camera Configuration
+# =============================================================================
+
+# The first camera paces the frames
+camera_topics:
+  - "/cam_wrist_r/image_raw/compressed"
+
+camera_topic_mapping:
+  "/cam_wrist_r/image_raw/compressed": "wrist_r"
+
+image_resolution: [640, 480]
+
+
+# =============================================================================
+# Quick Reference
+# =============================================================================
+#
+# Output (LeRobot dataset, convert with --fps 30), one episode per kept segment:
+#   observation.state [8] = [x, y, z, rx, ry, rz, finger_width_m, finger_effort]
+#                           TCP pose at t in H (rotation vector of R_H^-1 R_tcp),
+#                           finger position and effort at t
+#   action            [7] = [x, y, z, rx, ry, rz, gripper]
+#                           TCP pose at t+1 in H (same convention and names as
+#                           the state), last finger command at or before t
+#   observation.images.wrist_r
+#
+# The action pose is absolute in H. Train with
+#   --action-type=delta_obs_t --delta-exclude-joints=gripper
+# so every chunk row becomes action - observation.state by name, and the
+# gripper target stays absolute.

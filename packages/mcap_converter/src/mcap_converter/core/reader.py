@@ -45,12 +45,19 @@ class McapReader:
         if not self.mcap_path.exists():
             raise FileNotFoundError(f"MCAP file not found: {mcap_path}")
 
-    def read_messages(self, topics: Optional[List[str]] = None) -> Iterator:
+    def read_messages(
+        self,
+        topics: Optional[List[str]] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> Iterator:
         """
         Read messages from MCAP file
 
         Args:
             topics: List of topics to read. If None, read all topics.
+            start_time: If set, skip messages logged before this time (ns).
+            end_time: If set, skip messages logged at or after this time (ns).
 
         Yields:
             Messages from MCAP file with structure:
@@ -64,7 +71,9 @@ class McapReader:
                 print(f"Time: {msg.log_time}")
                 print(f"Data: {msg.ros_msg}")
         """
-        return read_ros2_messages(str(self.mcap_path), topics=topics)
+        return read_ros2_messages(
+            str(self.mcap_path), topics=topics, start_time=start_time, end_time=end_time
+        )
 
     def list_topics(self) -> Dict[str, Any]:
         """

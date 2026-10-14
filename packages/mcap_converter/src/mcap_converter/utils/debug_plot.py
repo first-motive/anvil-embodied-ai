@@ -122,7 +122,9 @@ def plot_conversion_debug(
             row, col = divmod(j, ncols)
             ax = axes[row][col]
             ax.plot(frames, obs_arr[:, j], color="steelblue", linewidth=1.0, label="obs.state")
-            ax.plot(frames, act_arr[:, j], color="darkorange", linewidth=1.0, linestyle="--", label="action")
+            # The state can carry entries the action has none for (EE mode: finger effort)
+            if j < act_arr.shape[1]:
+                ax.plot(frames, act_arr[:, j], color="darkorange", linewidth=1.0, linestyle="--", label="action")
             ax.set_title(name, fontsize=9)
             ax.set_xlabel("frame", fontsize=8)
             ax.tick_params(labelsize=7)

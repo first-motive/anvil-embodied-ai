@@ -213,6 +213,7 @@ class LeRobotWriter:
         self,
         joint_names: Dict[str, List[str]],
         camera_names: List[str],
+        vector_names: Dict[str, List[str]] | None = None,
     ) -> LeRobotDataset:
         """
         Create new LeRobot dataset
@@ -222,12 +223,19 @@ class LeRobotWriter:
                          - Single robot: {"": ["joint1", "joint2"]}
                          - Multi-robot: {"right": ["joint1", "joint2"], "left": ["joint1"]}
             camera_names: List of camera names
+            vector_names: Feature key to element names, replacing the
+                          joint-derived features (e.g. EE pose features)
 
         Returns:
             Initialized LeRobotDataset instance
         """
         # Define features
-        features = self._define_features(joint_names, camera_names)
+        if vector_names is None:
+            features = self._define_features(joint_names, camera_names)
+        else:
+            features = self._image_features(camera_names)
+            for key, names in vector_names.items():
+                features[key] = {"dtype": "float32", "shape": (len(names),), "names": names}
 
         if not self.quiet:
             print("\n=== Creating LeRobot dataset (latest format) ===")
@@ -308,6 +316,19 @@ class LeRobotWriter:
             if not self.quiet:
                 print("    [OK] Cleaned images/")
 
+    def _image_features(self, camera_names: List[str]) -> Dict[str, Any]:
+        """Video features for each camera, at the configured resolution."""
+        # Get resolution from config: [width, height] -> (height, width) for shape
+        img_width, img_height = self.config.image_resolution
+        return {
+            f"observation.images.{cam_name}": {
+                "dtype": "video",
+                "shape": (3, img_height, img_width),  # (channels, height, width)
+                "names": ["channel", "height", "width"],
+            }
+            for cam_name in camera_names
+        }
+
     def _define_features(
         self,
         joint_names: Dict[str, List[str]],
@@ -329,17 +350,8 @@ class LeRobotWriter:
         Returns:
             Features dictionary for LeRobotDataset
         """
-        features = {}
-
         # Image features (shared across all robots)
-        # Get resolution from config: [width, height] -> (height, width) for shape
-        img_width, img_height = self.config.image_resolution
-        for cam_name in camera_names:
-            features[f"observation.images.{cam_name}"] = {
-                "dtype": "video",
-                "shape": (3, img_height, img_width),  # (channels, height, width)
-                "names": ["channel", "height", "width"],
-            }
+        features = self._image_features(camera_names)
 
         # Check if multi-robot (has named robots like 'left', 'right')
         robots = sorted([r for r in joint_names.keys() if r])
