@@ -88,6 +88,29 @@ MODEL_PATH=$(pwd)/model_zoo/my-task/checkpoints/last \
 
 Before running, review this file:
 
+**Robot names** come from the `robot_profile` launch argument (default
+`loader_openarm_v2`), not from this file. The config names arms (`left`, `right`) and
+joint ids (`joint1`, `finger_joint1`); the profile in
+[anvil_robot_profiles](../ros2/src/anvil_robot_profiles/README.md) turns them into full
+joint names and each arm's controller topic. An arm's `command_topic` overrides the
+profile's topic, as the eval config does to publish under `/eval`.
+
+No profile joint is ever read as 0.0. The node resolves every joint name at startup, waits
+for the first `/joint_states`, and refuses to run if any profile joint is missing from it,
+which is how a wrong `robot_profile` shows up. A NaN or infinite reading counts as
+missing. Later, a step whose joint state lacks a joint's position (or velocity or effort,
+if the policy reads them) is skipped, and an arm whose limiter reference lacks one is not
+commanded. No arm is commanded while the last joint state is older than 0.5 s. Each case
+logs an error. Echo-only mode publishes no commands and skips the startup check. Tests:
+
+```bash
+cd ros2/src/lerobot_control
+PYTHONPATH=$PWD:$PWD/../anvil_robot_profiles uv run --no-project --with pytest \
+    --with pyyaml --with numpy --with torch --with opencv-python-headless pytest test
+```
+
+Without torch, the node and strategy tests are not collected.
+
 **Model**
 ```yaml
 model:

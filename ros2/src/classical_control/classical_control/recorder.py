@@ -27,7 +27,7 @@ import shutil
 import signal
 import subprocess
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -71,6 +71,12 @@ class RecordingConfig:
             raise ValueError("settle_s must not be negative")
         if self.min_free_bytes < 0:
             raise ValueError("min_free_gb must not be negative")
+
+    def with_topic(self, topic: str) -> RecordingConfig:
+        """Return this config also recording `topic`, unchanged if it is already listed."""
+        if topic in self.topics:
+            return self
+        return replace(self, topics=(*self.topics, topic))
 
 
 _RECORDING_KEYS = {"topics", "topic_regex", "storage", "stop_timeout_s", "settle_s"}

@@ -136,6 +136,7 @@ anvil-embodied-ai/
 │   ├── anvil_eval_ros/            # Offline evaluation: ROS2 MCAP replay
 │   └── anvil_shared/              # Shared utilities (pure-Python, no ML deps)
 ├── ros2/
+│   ├── src/anvil_robot_profiles/  # Joint, controller and frame names per robot
 │   └── src/lerobot_control/       # ROS2 inference node (Jazzy)
 ├── configs/
 │   ├── cyclonedds/                # CycloneDDS peer configs

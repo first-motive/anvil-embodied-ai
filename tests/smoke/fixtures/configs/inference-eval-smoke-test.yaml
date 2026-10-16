@@ -61,7 +61,6 @@ joint_names:
 
 arms:
   right:
-    ros_prefix: "follower_r"
     command_topic: "/eval/follower_r_forward_position_controller/commands"
     action_start: 0
     action_end: 8

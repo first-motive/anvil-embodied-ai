@@ -34,6 +34,7 @@ from typing import Any
 
 import numpy as np
 import rclpy
+from anvil_robot_profiles import DEFAULT_PROFILE, DRIVEN_ARM, load_profile
 from classical_control_msgs.action import PickPlace
 from geometry_msgs.msg import PoseStamped
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
@@ -257,6 +258,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="send dry_run goals; nothing moves")
     parser.add_argument("--seed", type=int, help="knob sampler seed, for a repeatable run")
     parser.add_argument("--git-sha", help="commit the run was started from")
+    parser.add_argument(
+        "--robot-profile",
+        default=DEFAULT_PROFILE,
+        help="robot profile naming the arm controller to record: shipped name or yaml path",
+    )
     return parser.parse_args(argv)
 
 
@@ -274,6 +280,10 @@ class RunSettings:
     def load(cls, args: argparse.Namespace) -> RunSettings:
         obj = load_object_config(args.objects_dir, args.object)
         recording = load_recording_config(args.collect_config)
+        # The joint command topic is named by the robot, so it comes from the profile.
+        recording = recording.with_topic(
+            load_profile(args.robot_profile).arms[DRIVEN_ARM].command_topic
+        )
         loop = load_loop_config(args.collect_config, args.perception_config)
         limits = StopLimits(
             max_grasp_retries=loop.max_grasp_retries,

@@ -10,6 +10,7 @@ Architecture:
 - Main Process: Read from shared memory, run model inference, publish actions
 """
 
+import math
 import multiprocessing as mp
 import time
 from typing import Any
@@ -19,7 +20,18 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
 
 from ..image_worker import run_image_worker
+from ..joint_layout import state_joint_names
 from ..shared_image_buffer import SharedImageBuffer
+
+_STATE_KEYS = {
+    "position": "observation.state",
+    "velocity": "observation.velocity",
+    "effort": "observation.effort",
+}
+
+
+def _finite(names, values) -> dict[str, float]:
+    return {name: value for name, value in zip(names, values) if math.isfinite(value)}
 
 
 class MultiProcessStrategy:
@@ -36,6 +48,7 @@ class MultiProcessStrategy:
         self._camera_names: list[str] = []
         self._camera_mapping: dict[str, str] = {}
         self._joint_names_config: dict = {}
+        self._state_joint_names: list[str] = []
         self._image_shape: tuple = (480, 640, 3)
 
         # Shared memory buffer
@@ -50,6 +63,7 @@ class MultiProcessStrategy:
         self._joint_velocities: dict[str, float] | None = None
         self._joint_efforts: dict[str, float] | None = None
         self._joint_timestamp: float | None = None
+        self._joint_received: float | None = None  # time.monotonic() at receipt
 
         # Metrics tracker (set via setup)
         self._metrics = None
@@ -63,6 +77,7 @@ class MultiProcessStrategy:
         config: dict,
         camera_mapping: dict[str, str],
         joint_names_config: dict,
+        robot_profile: Any,
         joint_state_topic: str,
         image_shape: tuple,
         metrics: Any = None,
@@ -75,6 +90,7 @@ class MultiProcessStrategy:
         self._camera_mapping = camera_mapping
         self._camera_names = list(camera_mapping.values())
         self._joint_names_config = joint_names_config
+        self._state_joint_names = state_joint_names(robot_profile, joint_names_config)
         self._image_shape = image_shape
         self._metrics = metrics
         self._callback_group = callback_group
@@ -154,12 +170,12 @@ class MultiProcessStrategy:
         if self._metrics:
             self._metrics.record_joint_state()
 
-        self._joint_positions = dict(zip(msg.name, msg.position))
-        if msg.velocity:
-            self._joint_velocities = dict(zip(msg.name, msg.velocity))
-        if msg.effort:
-            self._joint_efforts = dict(zip(msg.name, msg.effort))
+        # A NaN or inf reading is dropped, so the joint counts as missing downstream.
+        self._joint_positions = _finite(msg.name, msg.position)
+        self._joint_velocities = _finite(msg.name, msg.velocity) if msg.velocity else None
+        self._joint_efforts = _finite(msg.name, msg.effort) if msg.effort else None
         self._joint_timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self._joint_received = time.monotonic()
 
     def get_observation(
         self,
@@ -182,6 +198,13 @@ class MultiProcessStrategy:
             self._last_incomplete_reason = "waiting for joint state"
             return None
 
+        # A policy must never see a made-up 0.0 for a joint; skip this step instead.
+        for feature, values in self._state_features().items():
+            missing = [n for n in self._state_joint_names if n not in (values or {})]
+            if missing:
+                self._last_incomplete_reason = f"joint {feature} missing from joint state: {missing}"
+                return None
+
         # Build observation dict
         observation = self._build_observation(images)
         return observation
@@ -201,33 +224,29 @@ class MultiProcessStrategy:
             image_tensor = image_tensor.permute(2, 0, 1).unsqueeze(0)
             observation[f"observation.images.{camera_name}"] = image_tensor
 
-        # Build state observations (position / velocity / effort) based on config
-        if self._joint_positions:
-            obs_prefix = self._joint_names_config.get("observation_prefix", "follower")
-            sep = self._joint_names_config.get("separator", "_")
-            arm_mapping = self._joint_names_config.get("arm_mapping", {"l": "left", "r": "right"})
-            joint_order = self._joint_names_config.get("model_joint_order", [])
-            state_features = self._joint_names_config.get("state_features", ["position"])
-
-            feature_map = {
-                "position": (self._joint_positions, "observation.state"),
-                "velocity": (self._joint_velocities, "observation.velocity"),
-                "effort": (self._joint_efforts, "observation.effort"),
-            }
-
-            for feature in state_features:
-                if feature not in feature_map:
-                    continue
-                data_dict, obs_key = feature_map[feature]
-                ordered = []
-                for arm_key in sorted(arm_mapping.keys()):
-                    for joint_id in joint_order:
-                        joint_name = f"{obs_prefix}{sep}{arm_key}{sep}{joint_id}"
-                        val = data_dict.get(joint_name, 0.0) if data_dict else 0.0
-                        ordered.append(val)
-                observation[obs_key] = torch.tensor(ordered, dtype=torch.float32).unsqueeze(0)
+        # State features (position / velocity / effort); get_observation checked every name.
+        for feature, values in self._state_features().items():
+            ordered = [values[name] for name in self._state_joint_names]
+            tensor = torch.tensor(ordered, dtype=torch.float32).unsqueeze(0)
+            observation[_STATE_KEYS[feature]] = tensor
 
         return observation
+
+    def _state_features(self) -> dict[str, dict[str, float] | None]:
+        """The configured state features the policy reads, each with its latest values."""
+        latest = {
+            "position": self._joint_positions,
+            "velocity": self._joint_velocities,
+            "effort": self._joint_efforts,
+        }
+        features = self._joint_names_config.get("state_features", ["position"])
+        return {feature: latest[feature] for feature in features if feature in latest}
+
+    def joint_state_age(self) -> float | None:
+        """Seconds since the last joint state arrived, or None before the first."""
+        if self._joint_received is None:
+            return None
+        return time.monotonic() - self._joint_received
 
     def get_current_joint_positions(self) -> dict[str, float]:
         """Get current joint positions for delta limiting."""

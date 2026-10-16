@@ -8,7 +8,8 @@
 
 recording:
   # Topics recorded by exact name: every topic the loader records, plus the classical
-  # baseline's detections so a failed cycle can be diagnosed from its own bag.
+  # baseline's detections so a failed cycle can be diagnosed from its own bag. collect_node
+  # adds the right arm's joint command topic from the robot profile.
   topics:
     - /joint_states                                      # arm and gripper joint positions
     - /ee_pose_right                                     # measured right TCP pose
@@ -16,7 +17,6 @@ recording:
     - /cam_chest/image_raw/compressed                    # chest camera, JPEG
     - /cam_waist/image_raw/compressed                    # waist camera, JPEG
     - /cam_wrist_r/image_raw/compressed                  # right wrist camera, JPEG
-    - /follower_r_forward_position_controller/commands   # joint commands sent to the arm
     - /hardware_state_controller/state                   # active / pause / estop
     - /tf                                                # dynamic transforms
     - /tf_static                                         # fixed transforms, latched

@@ -41,6 +41,7 @@ import rclpy
 import yaml
 from anvil_msgs.msg import CommandedEEPose, HardwareState
 from anvil_msgs.srv import SetHardwareState
+from anvil_robot_profiles import DRIVEN_ARM, declare_robot_profile
 from classical_control_msgs.action import PickPlace
 from geometry_msgs.msg import PoseStamped
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
@@ -73,7 +74,6 @@ PAPER_POSE_TOPIC = "/classical/paper_pose"
 HARDWARE_STATE_TOPIC = "/hardware_state_controller/state"
 HARDWARE_STATE_SERVICE = "/hardware_state_controller/set_state"
 ACTION_NAME = "/classical/pick_place"
-FINGER_JOINT = "follower_r_finger_joint1"
 
 #: Inputs that must stay fresh for the whole run.
 ARM_INPUTS = ("ee_pose", "finger")
@@ -138,6 +138,7 @@ class PickPlaceNode(Node):
         super().__init__("classical_task")
         self.declare_parameters("", list(PARAMETER_DEFAULTS.items()))
         param = {name: self.get_parameter(name).value for name in PARAMETER_DEFAULTS}
+        self._finger_joint = declare_robot_profile(self).arms[DRIVEN_ARM].gripper_joint
 
         self._frame_id = param["frame_id"]
         self._rate_hz = float(param["control_rate_hz"])
@@ -241,9 +242,9 @@ class PickPlaceNode(Node):
         self._freshness.mark("ee_pose", time.monotonic())
 
     def _on_joint_states(self, message: JointState) -> None:
-        if FINGER_JOINT not in message.name:
+        if self._finger_joint not in message.name:
             return
-        finger = float(message.position[message.name.index(FINGER_JOINT)])
+        finger = float(message.position[message.name.index(self._finger_joint)])
         if not math.isfinite(finger):
             # Left unmarked, so the freshness gate faults the run with STALE_POSE.
             return

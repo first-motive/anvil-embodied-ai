@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import pytest
 import yaml
+from anvil_robot_profiles import load_profile
 from classical_control import calibration
 from classical_control.calibration import (
     MarkerSpec,
@@ -253,11 +254,13 @@ def test_detect_marker_ignores_other_ids() -> None:
 # --- camera_yaml and persistence ---
 
 
-def test_camera_yaml_round_trips_through_the_chest_config(recovered, tmp_path) -> None:
+@pytest.mark.parametrize("profile", ["loader_openarm_v2", "fm_openarm_v2"])
+def test_camera_yaml_round_trips_through_the_chest_config(recovered, tmp_path, profile) -> None:
+    base_frame = load_profile(profile).base_frame
     path = tmp_path / "camera_chest.yaml"
-    path.write_text(yaml.safe_dump(camera_yaml(recovered)), encoding="utf-8")
+    path.write_text(yaml.safe_dump(camera_yaml(recovered, base_frame)), encoding="utf-8")
     config = ChestCameraConfig.from_yaml(path)
-    assert config.parent_frame == "follower_body_link0"
+    assert config.parent_frame == base_frame
     assert config.camera == recovered.camera
     np.testing.assert_allclose(
         pose_to_matrix(config.translation_xyz, config.rotation_xyzw),

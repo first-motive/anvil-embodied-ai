@@ -26,6 +26,7 @@ ENV AMENT_PREFIX_PATH=/opt/anvil_msgs:${AMENT_PREFIX_PATH} \
 
 WORKDIR /workspace
 
+COPY ros2/src/anvil_robot_profiles /workspace/src/anvil_robot_profiles
 COPY ros2/src/classical_control_msgs /workspace/src/classical_control_msgs
 COPY ros2/src/classical_control /workspace/src/classical_control
 COPY configs/cyclonedds /workspace/configs/cyclonedds

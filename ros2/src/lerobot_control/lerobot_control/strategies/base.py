@@ -25,6 +25,7 @@ class InferenceStrategy(Protocol):
         config: dict,
         camera_mapping: dict[str, str],
         joint_names_config: dict,
+        robot_profile: Any,
         joint_state_topic: str,
         image_shape: tuple,
         metrics: Any = None,
@@ -37,6 +38,7 @@ class InferenceStrategy(Protocol):
             config: Full configuration dictionary
             camera_mapping: Dict mapping ROS topic -> ML camera name
             joint_names_config: Joint naming configuration
+            robot_profile: anvil_robot_profiles.RobotProfile naming the robot's joints
             joint_state_topic: Topic for joint state messages
             image_shape: Expected image shape (H, W, C)
             metrics: Optional MetricsTracker for recording stats

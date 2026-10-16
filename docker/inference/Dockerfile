@@ -37,6 +37,7 @@ RUN if [ -n "${LEROBOT_EXTRAS}" ]; then \
     fi
 
 # Copy ROS2 package (changes often → late layer)
+COPY ros2/src/anvil_robot_profiles /workspace/src/anvil_robot_profiles
 COPY ros2/src/lerobot_control /workspace/src/lerobot_control
 
 # Copy configs (lerobot_control + cyclonedds)

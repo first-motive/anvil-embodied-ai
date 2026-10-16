@@ -19,6 +19,7 @@ or exits with code 1 on timeout or invalid data.
 import cv2
 import numpy as np
 import rclpy
+from anvil_robot_profiles import declare_robot_profile
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage, JointState
 from std_msgs.msg import Float64MultiArray
@@ -42,6 +43,8 @@ class MockControllerNode(Node):
         self.declare_parameter("required_actions", 10)
         self.declare_parameter("camera_resolution", "480p")
         self.declare_parameter("camera_fps", 30)
+        profile = declare_robot_profile(self)
+        arms = ("left", "right")
 
         # Get parameter values
         self._timeout = self.get_parameter("timeout").value
@@ -74,10 +77,7 @@ class MockControllerNode(Node):
         # Subscribers — one per arm, matching inference_node publish topics
         self._action_subs = [
             self.create_subscription(Float64MultiArray, topic, self.action_callback, 10)
-            for topic in [
-                "/follower_l_forward_position_controller/commands",
-                "/follower_r_forward_position_controller/commands",
-            ]
+            for topic in [profile.arms[arm].command_topic for arm in arms]
         ]
 
         # Separate timers: 500Hz joint states, configurable camera FPS
@@ -91,26 +91,10 @@ class MockControllerNode(Node):
         self.valid_actions_received = 0
         self.start_time = self.get_clock().now()
 
-        # Joint names for 16-DOF robot (8 joints per arm: finger + 7 joints)
-        # Naming matches production: follower_{l,r}_{joint_id}
-        self.joint_names = [
-            "follower_l_finger_joint1",
-            "follower_l_joint1",
-            "follower_l_joint2",
-            "follower_l_joint3",
-            "follower_l_joint4",
-            "follower_l_joint5",
-            "follower_l_joint6",
-            "follower_l_joint7",
-            "follower_r_finger_joint1",
-            "follower_r_joint1",
-            "follower_r_joint2",
-            "follower_r_joint3",
-            "follower_r_joint4",
-            "follower_r_joint5",
-            "follower_r_joint6",
-            "follower_r_joint7",
-        ]
+        # 16-DOF robot, 8 joints per arm in the order the dataset uses: finger, then 1-7.
+        self.joint_names = profile.joint_names(
+            arms, ["finger_joint1", *(f"joint{i}" for i in range(1, 8))]
+        )
 
         # Random number generator
         self._rng = np.random.default_rng()

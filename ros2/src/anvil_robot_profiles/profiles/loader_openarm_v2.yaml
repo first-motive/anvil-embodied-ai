@@ -1,0 +1,38 @@
+# The OpenArm v2 as the Anvil loader names it. The default profile: every name here is
+# the one classical_control and lerobot_control used before profiles existed, so a run
+# without `robot_profile` set behaves as it always has.
+name: loader_openarm_v2
+base_frame: follower_body_link0
+arms:
+  right:
+    # Controller order. lerobot_control commands each arm in joints-then-gripper order.
+    joints:
+      - follower_r_joint1
+      - follower_r_joint2
+      - follower_r_joint3
+      - follower_r_joint4
+      - follower_r_joint5
+      - follower_r_joint6
+      - follower_r_joint7
+    gripper_joint: follower_r_finger_joint1
+    arm_controller: follower_r_forward_position_controller
+    trajectory_controller: follower_r_jtc
+    ee_frame: follower_r_hand_tcp
+    hand_frame: follower_r_hand
+  left:
+    joints:
+      - follower_l_joint1
+      - follower_l_joint2
+      - follower_l_joint3
+      - follower_l_joint4
+      - follower_l_joint5
+      - follower_l_joint6
+      - follower_l_joint7
+    gripper_joint: follower_l_finger_joint1
+    arm_controller: follower_l_forward_position_controller
+    trajectory_controller: follower_l_jtc
+    ee_frame: follower_l_hand_tcp
+    hand_frame: follower_l_hand
+cameras:
+  chest: cam_chest_optical
+  wrist_right: cam_wrist_r_optical

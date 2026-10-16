@@ -28,6 +28,7 @@ import numpy as np
 import rclpy
 import torch
 import yaml
+from anvil_robot_profiles import declare_robot_profile
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -35,8 +36,13 @@ from std_msgs.msg import Float64MultiArray
 
 from .action_limiter import ActionLimiter
 from .delta_restore import resolve_action_type, restore_delta_chunk
+from .joint_layout import command_joint_names, state_joint_names
 from .metrics_tracker import MetricsTracker
 from .model_loader import ModelLoader, set_deterministic_mode
+
+#: Oldest joint state a command may be limited against or a hold may copy; an older one
+#: may not be where the arm is.
+JOINT_STATE_MAX_AGE_S = 0.5
 
 
 class LeRobotInferenceNode(Node):
@@ -53,6 +59,8 @@ class LeRobotInferenceNode(Node):
         self._subscription_callback_group = ReentrantCallbackGroup()
 
         self._setup_config()
+        if not self.echo_topic_only:
+            self._require_profile_joints()
 
         self.metrics = MetricsTracker()
         self.strategy = self._create_strategy()
@@ -61,6 +69,7 @@ class LeRobotInferenceNode(Node):
             config={"device": self.device, **self.config},
             camera_mapping=self.camera_mapping,
             joint_names_config=self.joint_names_config,
+            robot_profile=self.robot_profile,
             joint_state_topic=self.joint_state_topic,
             image_shape=self.image_shape,
             metrics=self.metrics,
@@ -163,6 +172,7 @@ class LeRobotInferenceNode(Node):
         self.declare_parameter("debug", False)
         self.declare_parameter("debug_image_dir", "")
         self.declare_parameter("monitor_enable", False)
+        self.robot_profile = declare_robot_profile(self)
 
         # Static fields from ROS2 params
         self.echo_topic_only = self.get_parameter("echo_topic_only").value
@@ -203,6 +213,26 @@ class LeRobotInferenceNode(Node):
 
         self.arms_config = self.config.get("arms", {})
         self.joint_names_config = self.config.get("joint_names", {})
+        ignored = [
+            f"arms.{arm}.ros_prefix" for arm, cfg in self.arms_config.items() if "ros_prefix" in cfg
+        ]
+        ignored += [
+            f"joint_names.{key}"
+            for key in ("observation_prefix", "separator")
+            if key in self.joint_names_config
+        ]
+        if ignored:
+            self.get_logger().warning(
+                f"{', '.join(ignored)} ignored: joint names come from "
+                f"robot_profile {self.robot_profile.name}"
+            )
+        self._command_joint_names = command_joint_names(
+            self.robot_profile,
+            list(self.arms_config),
+            self.joint_names_config.get(
+                "controller_joint_order", self.joint_names_config.get("joint_order", [])
+            ),
+        )
 
         # Inference tuning — per model type (resolved after model_type is known)
         self._tuning_config = self.config.get("inference_tuning", {})
@@ -469,9 +499,9 @@ class LeRobotInferenceNode(Node):
         """Setup action publishers."""
         self.arm_publishers: dict[str, rclpy.publisher.Publisher] = {}
         for arm_name, arm_config in self.arms_config.items():
+            # An explicit command_topic remaps the output, e.g. to /eval/... for offline eval.
             cmd_topic = arm_config.get(
-                "command_topic",
-                f"/{arm_name}_forward_position_controller/commands",
+                "command_topic", self.robot_profile.arms[arm_name].command_topic
             )
             self.arm_publishers[arm_name] = self.create_publisher(Float64MultiArray, cmd_topic, 10)
             self.get_logger().info(f"Publishing to: {cmd_topic}")
@@ -766,13 +796,43 @@ class LeRobotInferenceNode(Node):
             return [self._move_to_device(value) for value in data]
         return data
 
+    def _require_profile_joints(self) -> None:
+        """Block until the first joint state, then refuse to run if a profile joint is absent.
+
+        A joint the robot does not publish would otherwise enter the policy state and the
+        limiter reference as 0.0, which is how a wrong robot_profile shows up.
+        """
+        from rclpy.wait_for_message import wait_for_message
+        from sensor_msgs.msg import JointState
+
+        required = state_joint_names(self.robot_profile, self.joint_names_config)
+        for names in self._command_joint_names.values():
+            required += names
+        while True:
+            received, message = wait_for_message(
+                JointState, self, self.joint_state_topic, time_to_wait=5.0
+            )
+            if received:
+                break
+            self.get_logger().warning(f"Waiting for {self.joint_state_topic}...")
+        missing = sorted(set(required) - set(message.name))
+        if missing:
+            raise RuntimeError(
+                f"robot_profile {self.robot_profile.name}: joints missing from "
+                f"{self.joint_state_topic}: {missing}. Is this the right profile for this robot?"
+            )
+
     def _publish_action(self, action: np.ndarray) -> None:
         """Publish action to arm controllers."""
         current_positions = self.strategy.get_current_joint_positions()
-        joint_order = self.joint_names_config.get(
-            "controller_joint_order",
-            self.joint_names_config.get("joint_order", []),
-        )
+        age = self.strategy.joint_state_age()
+        if age is None or age > JOINT_STATE_MAX_AGE_S:
+            # Limiting against a stale reference could let the arm jump; wait for fresh state.
+            state = "never received" if age is None else f"{age:.2f} s old"
+            self.get_logger().error(
+                f"Not commanding: joint states {state}", throttle_duration_sec=1.0
+            )
+            return
 
         monitor_obs_parts: list[np.ndarray] = []
         monitor_cmd_parts: list[np.ndarray] = []
@@ -780,18 +840,19 @@ class LeRobotInferenceNode(Node):
         for arm_name, arm_config in self.arms_config.items():
             start_idx = arm_config.get("action_start", 0)
             end_idx = arm_config.get("action_end", len(action))
-            ros_prefix = arm_config.get("ros_prefix", arm_name)
 
             arm_action = action[start_idx:end_idx].copy()
 
-            arm_current = None
-            if current_positions:
-                arm_current = np.array(
-                    [
-                        current_positions.get(f"{ros_prefix}_{joint_order[i]}", 0.0)
-                        for i in range(len(arm_action))
-                    ]
+            names = self._command_joint_names[arm_name][: len(arm_action)]
+            missing = [n for n in names if n not in current_positions]
+            if missing:
+                # Never limit against a made-up reference: skip this arm's command.
+                self.get_logger().error(
+                    f"Not commanding {arm_name}: joints missing from joint states: {missing}",
+                    throttle_duration_sec=1.0,
                 )
+                continue
+            arm_current = np.array([current_positions[n] for n in names])
 
             # Delta restore is done upstream in _obs_update (chunk-level).
             # Actions arriving here are already absolute — just apply safety limits.
@@ -807,8 +868,7 @@ class LeRobotInferenceNode(Node):
                 self.arm_publishers[arm_name].publish(msg)
 
             if self._monitor_enable:
-                if arm_current is not None:
-                    monitor_obs_parts.append(arm_current)
+                monitor_obs_parts.append(arm_current)
                 monitor_cmd_parts.append(arm_action)
 
         if self._monitor_enable and monitor_cmd_parts:
@@ -1011,16 +1071,11 @@ class LeRobotInferenceNode(Node):
         current = self.strategy.get_current_joint_positions()
         if not current:
             return
-        joint_order = self.joint_names_config.get(
-            "controller_joint_order",
-            self.joint_names_config.get("joint_order", []),
-        )
         for arm_name, arm_config in self.arms_config.items():
-            ros_prefix = arm_config.get("ros_prefix", arm_name)
+            names = self._command_joint_names[arm_name]
             start_idx = arm_config.get("action_start", 0)
-            end_idx = arm_config.get("action_end", len(joint_order))
-            arm_joints = joint_order[start_idx:end_idx]
-            positions = [current.get(f"{ros_prefix}_{j}", 0.0) for j in arm_joints]
+            end_idx = arm_config.get("action_end", len(names))
+            positions = [current.get(n, 0.0) for n in names[start_idx:end_idx]]
             msg = Float64MultiArray()
             msg.data = positions
             if arm_name in self.arm_publishers:

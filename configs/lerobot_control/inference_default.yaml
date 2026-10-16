@@ -83,7 +83,7 @@ joint_names:
     - finger_joint1
 
   # arm_mapping controls how observation.state is assembled:
-  #   Keys are used in joint name lookup: f"{observation_prefix}_{arm_key}_{joint_id}"
+  #   Values are robot_profile arms; each joint id resolves to that arm's joint name
   #   For bimanual Anvil robot: {l: left, r: right} → 2×8 = 16 DOF state
   #   For pi05_libero_finetuned (single-arm, 8 DOF): use only one arm below.
   arm_mapping:
@@ -100,15 +100,13 @@ joint_names:
 # ML model outputs: action = [left_joints..., right_joints...]
 # Split and publish to separate controller topics
 
+# Arm keys name robot_profile arms. Each arm publishes to its profile arm controller's
+# command topic unless command_topic overrides it.
 arms:
   left:
-    ros_prefix: "follower_l"
-    command_topic: "/follower_l_forward_position_controller/commands"
     action_start: 0
     action_end: 8
   right:
-    ros_prefix: "follower_r"
-    command_topic: "/follower_r_forward_position_controller/commands"
     action_start: 8
     action_end: 16
 

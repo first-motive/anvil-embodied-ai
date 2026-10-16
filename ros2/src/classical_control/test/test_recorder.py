@@ -102,11 +102,16 @@ def test_shipped_config_records_loader_and_tactile_topics():
     assert "/joint_states" in config.topics
     assert "/cam_wrist_r/image_raw/compressed" in config.topics
     assert "/tf_static" in config.topics
-    assert len(config.topics) == 12
+    assert len(config.topics) == 11
     assert config.topic_regex == "^/gripper/tactile/.*"
     assert config.storage == "mcap"
     assert config.stop_timeout_s > 0.0
     assert config.min_free_bytes == 50 * BYTES_PER_GB
+
+
+def test_with_topic_does_not_duplicate_a_listed_topic():
+    config = load_recording_config(SHIPPED_CONFIG)
+    assert config.with_topic("/joint_states") is config
 
 
 def test_config_loads_from_file_and_ignores_other_sections(config):
