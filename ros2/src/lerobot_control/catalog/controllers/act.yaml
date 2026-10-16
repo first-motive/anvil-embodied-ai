@@ -1,0 +1,16 @@
+# Catalog entry (fm_sim.controllers): a ACT policy through lerobot_control's
+# inference_node, which streams the robot profile's arm controllers. The sim launch
+# loads the checkpoint at $LEROBOT_SIM_CHECKPOINTS/act (see launch/vla_sim.launch.py).
+# Listed but refused: no sim checkpoint exists yet, the fm-sim image has no torch or
+# lerobot, and fm-sim's forward position controllers take 7 arm joints where
+# inference_node sends the profile's arm joints plus the gripper.
+name: act
+description: >-
+  ACT policy via lerobot_control. Not available: no sim-trained checkpoint, no torch or
+  lerobot in the sim image, and the gripper is outside fm-sim's forward position
+  controllers
+available: false
+activate: [arm_forward_position]
+launch:
+  package: lerobot_control
+  path: launch/sim_act.launch.py

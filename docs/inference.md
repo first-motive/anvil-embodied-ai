@@ -163,6 +163,25 @@ inference_tuning:
 #   # overcoming motor dead zones / friction. Default: disabled (null).
 ```
 
+## Running In fm-sim
+
+`lerobot_control` registers `act`, `smolvla` and `pi0` in fm-sim's controller catalog.
+Each entry's include (`launch/sim_<policy>.launch.py`) runs `launch/vla_sim.launch.py`
+with its policy. That launch starts `inference_node` on the checkpoint in
+`$LEROBOT_SIM_CHECKPOINTS/<policy>/`, which must hold `inference.yaml` (the inference
+config for that checkpoint's cameras and joints) and the LeRobot checkpoint, with its
+`config.json` in that directory or under `pretrained_model/`. The `type` in that
+`config.json` must match the policy. Both files must resolve inside that policy
+directory, and `config.json` must be at most 1 MiB. A missing, mismatched or
+out-of-bounds checkpoint fails the launch before the node starts. The launch is sim-only:
+it refuses `use_sim:=false` (its default), so a wrapper run by hand never starts
+`inference_node` against hardware.
+
+All three entries are listed with `available: false`, so fm-sim refuses them: no
+sim-trained checkpoint exists, the fm-sim image carries no torch or lerobot, and
+inference_node commands the gripper through the profile's arm controller, which in fm-sim
+covers the 7 arm joints only.
+
 ## DDS Middleware Selection
 
 Both Fast DDS and CycloneDDS are supported. **CycloneDDS is the default** (faster in our tests).

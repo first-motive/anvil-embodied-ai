@@ -7,7 +7,14 @@
     # Required: there is no safe built-in grasp height. "~" is expanded.
     mined_params_file: ""
 
-    # Frame stamped on /commanded_ee_right; the robot IK expects world.
+    # How the node reaches the arm. "loader": anvil_msgs/CommandedEEPose to the Anvil
+    # loader, gated by its hardware_state_controller. "pose": geometry_msgs/PoseStamped in
+    # the robot profile's base_frame for the fm-sim EE follower, measured pose from TF, no
+    # gripper command; refused unless use_sim_time is true.
+    ee_interface: "loader"
+
+    # Frame stamped on /commanded_ee_right with ee_interface "loader"; the robot IK
+    # expects world. "pose" always stamps the profile's base_frame.
     frame_id: "world"
 
     # Command streaming rate in Hz. Trajectories are sampled at this rate, one sample per tick.

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Register `classical`, `act`, `smolvla` and `pi0` in the fm-sim controller catalog, each with a sim include launch and listed as not yet available; `classical_control` `task_node` gains `ee_interface: pose`, a `PoseStamped` output in the profile's base frame for fm-sim's EE follower
 - Rename `mcap-upload` CLI entry point to `hf-upload` — clarifies the command uploads a converted LeRobot dataset, not raw MCAP files
 - Add `--debug` flag to `run_inference.sh` (exports `DEBUG=true`; enables action smoothness, queue depth stats, Action FPS in inference node)
 - Add `inference_flags_smoke_test.py` covering all `run_inference.sh` flags via docker shim assertions and live Docker startup tests
