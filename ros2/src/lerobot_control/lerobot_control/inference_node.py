@@ -1069,18 +1069,34 @@ class LeRobotInferenceNode(Node):
         if not hasattr(self, "arm_publishers"):
             return
         current = self.strategy.get_current_joint_positions()
-        if not current:
+        age = self.strategy.joint_state_age()
+        if age is None or age > JOINT_STATE_MAX_AGE_S:
+            state = "never received" if age is None else f"{age:.2f} s old"
+            self.get_logger().error(f"Shutdown: NO hold command sent, joint states {state}")
             return
-        for arm_name, arm_config in self.arms_config.items():
+        if not current:
+            self.get_logger().error(
+                "Shutdown: NO hold command sent, joint states carry no finite positions"
+            )
+            return
+        held = []
+        for arm_name in self.arms_config:
+            # Each arm holds every joint its controller takes. action_start/end index the
+            # policy output across arms, not this arm's joint list.
             names = self._command_joint_names[arm_name]
-            start_idx = arm_config.get("action_start", 0)
-            end_idx = arm_config.get("action_end", len(names))
-            positions = [current.get(n, 0.0) for n in names[start_idx:end_idx]]
+            missing = [n for n in names if n not in current]
+            if missing:
+                self.get_logger().error(
+                    f"Shutdown: NO hold command for {arm_name}, joints missing: {missing}"
+                )
+                continue
             msg = Float64MultiArray()
-            msg.data = positions
+            msg.data = [current[n] for n in names]
             if arm_name in self.arm_publishers:
                 self.arm_publishers[arm_name].publish(msg)
-        self.get_logger().info("Shutdown: hold-position command sent to controllers")
+                held.append(arm_name)
+        if held:
+            self.get_logger().info(f"Shutdown: hold-position command sent to {', '.join(held)}")
 
     def destroy_node(self) -> None:
         """Cleanup timers, inference thread, strategy, and destroy node."""
