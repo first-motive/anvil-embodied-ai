@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import csv
+import sys
+import types
 
 import numpy as np
 import pytest
 import yaml
+from anvil_robot_profiles import DRIVEN_ARM, load_profile
 from classical_control.episode_miner import (
     CSV_COLUMNS,
+    EE_POSE_TOPIC,
+    JOINT_STATES_TOPIC,
     EpisodeResult,
     find_gripper_events,
     mine_episode,
     pose_at,
+    read_episode,
     summarise,
     write_ground_truth_csv,
     write_params_yaml,
@@ -175,3 +181,76 @@ def test_csv_round_trip(tmp_path):
     assert float(rows[0]["paper_z"]) == pytest.approx(0.35)
     assert rows[1]["open_t"] == ""
     assert rows[1]["paper_x"] == ""
+
+
+# --- read_episode ---
+
+
+def _fake_bag(monkeypatch, messages):
+    """Stand in for rosbag2_py and the ROS deserialiser: the bag yields `messages` as-is."""
+
+    class Reader:
+        def open(self, *_):
+            self._queue = list(messages)
+
+        def get_all_topics_and_types(self):
+            topics = (JOINT_STATES_TOPIC, EE_POSE_TOPIC)
+            return [types.SimpleNamespace(name=t, type="x") for t in topics]
+
+        def set_filter(self, _):
+            pass
+
+        def has_next(self):
+            return bool(self._queue)
+
+        def read_next(self):
+            return self._queue.pop(0)
+
+    rosbag2_py = types.SimpleNamespace(
+        SequentialReader=Reader,
+        StorageOptions=lambda **_: None,
+        ConverterOptions=lambda **_: None,
+        StorageFilter=lambda **_: None,
+    )
+    modules = {
+        "rosbag2_py": rosbag2_py,
+        "rclpy": types.ModuleType("rclpy"),
+        "rclpy.serialization": types.SimpleNamespace(deserialize_message=lambda data, _: data),
+        "rosidl_runtime_py": types.ModuleType("rosidl_runtime_py"),
+        "rosidl_runtime_py.utilities": types.SimpleNamespace(get_message=lambda _: None),
+    }
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+
+@pytest.mark.parametrize("profile", ["loader_openarm_v2", "fm_openarm_v2"])
+def test_read_episode_reads_only_the_given_finger_joint(monkeypatch, tmp_path, profile):
+    finger_joint = load_profile(profile).arms[DRIVEN_ARM].gripper_joint
+    joints = types.SimpleNamespace(
+        name=["follower_r_finger_joint1", "openarm_right_finger_joint1"],
+        position=[0.01, 0.02],
+    )
+    pose = types.SimpleNamespace(
+        pose=types.SimpleNamespace(
+            position=types.SimpleNamespace(x=1.0, y=2.0, z=3.0),
+            orientation=types.SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+        )
+    )
+    other = types.SimpleNamespace(name=["follower_l_finger_joint1"], position=[0.5])
+    _fake_bag(
+        monkeypatch,
+        [
+            (JOINT_STATES_TOPIC, joints, 1_000_000_000),
+            (JOINT_STATES_TOPIC, other, 2_000_000_000),
+            (EE_POSE_TOPIC, pose, 3_000_000_000),
+        ],
+    )
+    (tmp_path / "metadata.yaml").write_text("")
+
+    finger_times, finger, ee_times, ee_poses = read_episode(tmp_path, finger_joint)
+
+    expected = joints.position[joints.name.index(finger_joint)]
+    np.testing.assert_allclose(finger_times, [1.0])
+    np.testing.assert_allclose(finger, [expected])
+    np.testing.assert_allclose(ee_times, [3.0])
+    np.testing.assert_allclose(ee_poses, [[1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0]])

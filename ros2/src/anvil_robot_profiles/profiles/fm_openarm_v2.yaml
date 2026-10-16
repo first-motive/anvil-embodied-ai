@@ -1,0 +1,41 @@
+# The OpenArm v2 under First Motive's canonical names, as fm-robot builds it from
+# openarm_description v2.0 (default_bimanual preset, prefixes openarm_left_ and
+# openarm_right_). ee_frame is the grasp frame emitted when emit_grasp_frame is true;
+# camera frames are the ones fm-robot mounts.
+# trajectory_controller is the arm JTC from fm_ros2 fm_bringup
+# config/openarm/default_bimanual.controllers.yaml; arm_controller is the forward position
+# controller fm-sim defines.
+name: fm_openarm_v2
+base_frame: openarm_body_link0
+arms:
+  right:
+    joints:
+      - openarm_right_joint1
+      - openarm_right_joint2
+      - openarm_right_joint3
+      - openarm_right_joint4
+      - openarm_right_joint5
+      - openarm_right_joint6
+      - openarm_right_joint7
+    gripper_joint: openarm_right_finger_joint1
+    arm_controller: openarm_right_forward_position_controller
+    trajectory_controller: openarm_right_arm_controller
+    ee_frame: openarm_right_grasp_frame
+    hand_frame: openarm_right_ee_base_link
+  left:
+    joints:
+      - openarm_left_joint1
+      - openarm_left_joint2
+      - openarm_left_joint3
+      - openarm_left_joint4
+      - openarm_left_joint5
+      - openarm_left_joint6
+      - openarm_left_joint7
+    gripper_joint: openarm_left_finger_joint1
+    arm_controller: openarm_left_forward_position_controller
+    trajectory_controller: openarm_left_arm_controller
+    ee_frame: openarm_left_grasp_frame
+    hand_frame: openarm_left_ee_base_link
+cameras:
+  chest: openarm_cam_chest_optical
+  wrist_right: openarm_right_cam_wrist_optical

@@ -103,6 +103,7 @@ runs, and nothing otherwise.
 | Parameter | Type | Default | Notes |
 |---|---|---|---|
 | `mined_params_file` | string | `""` | Required; `mined_params.yaml` from `mine_episodes` |
+| `robot_profile` | string | `loader_openarm_v2` | Names the gripper joint; a profile from [anvil_robot_profiles](../anvil_robot_profiles/README.md) or a yaml path. Launch argument of the same name |
 | `frame_id` | string | `world` | |
 | `control_rate_hz` | double | 30.0 | |
 | `workspace_min_m`, `workspace_max_m` | double[3] | [0.05, -0.55, 0.0], [0.65, 0.15, 0.70] | TCP box; all 104 demo positions fall inside it |
@@ -124,6 +125,9 @@ runs, and nothing otherwise.
 | `localise_max_age_s` | double | 1.0 | Older detections at LOCALISE give `STALE_POSE` |
 
 ### Tools
+
+`mine_episodes`, `calibrate_chest` and `collect_node` take `--robot-profile`, default
+`loader_openarm_v2`, for the gripper joint and the arm's joint command topic.
 
 | Command | Does |
 |---|---|
@@ -349,7 +353,7 @@ besides the webapp e-stop.
 
 ```bash
 cd ros2/src/classical_control
-PYTHONPATH=$PWD uv run --no-project --with pytest --with numpy \
+PYTHONPATH=$PWD:$PWD/../anvil_robot_profiles uv run --no-project --with pytest --with numpy \
     --with opencv-python-headless --with scipy --with pyyaml pytest test
 ```
 

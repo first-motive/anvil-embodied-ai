@@ -50,6 +50,7 @@ from typing import Any
 import cv2
 import numpy as np
 import yaml
+from anvil_robot_profiles import DEFAULT_PROFILE, DRIVEN_ARM, load_profile
 
 from classical_control.calibration import (
     MIN_VIEWS,
@@ -450,7 +451,6 @@ def run_sweep(
     from classical_control.task_node import (
         COMMAND_TOPIC,
         EE_POSE_TOPIC,
-        FINGER_JOINT,
         HARDWARE_STATE_SERVICE,
         HARDWARE_STATE_TOPIC,
         JOINT_STATES_TOPIC,
@@ -460,6 +460,7 @@ def run_sweep(
     rate_hz = float(params.get("control_rate_hz", 30.0))
     frame_id = str(params.get("frame_id", "world"))
     inputs = ("ee_pose", "finger")
+    finger_joint = load_profile(args.robot_profile).arms[DRIVEN_ARM].gripper_joint
     views_dir = args.out_dir / VIEWS_DIR
     views_dir.mkdir(parents=True, exist_ok=True)
 
@@ -496,9 +497,9 @@ def run_sweep(
         freshness.mark("ee_pose", time.monotonic())
 
     def on_joint_states(message: JointState) -> None:
-        if FINGER_JOINT not in message.name:
+        if finger_joint not in message.name:
             return
-        finger = float(message.position[message.name.index(FINGER_JOINT)])
+        finger = float(message.position[message.name.index(finger_joint)])
         if math.isfinite(finger):
             state["finger"] = finger
             freshness.mark("finger", time.monotonic())
@@ -695,6 +696,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--v-max", type=float, default=0.05, help="peak linear speed, m/s")
     parser.add_argument("--w-max", type=float, default=0.25, help="peak angular speed, rad/s")
     parser.add_argument("--settle-s", type=float, default=1.0, help="hold before capture, s")
+    parser.add_argument(
+        "--robot-profile",
+        default=DEFAULT_PROFILE,
+        help="robot profile naming the gripper joint: shipped name or yaml path",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="log the sweep, move nothing")
     mode.add_argument("--fit-only", action="store_true", help=f"re-fit out-dir/{SAMPLES_FILE}")

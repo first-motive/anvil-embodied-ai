@@ -21,9 +21,9 @@ from pathlib import Path
 
 import numpy as np
 import yaml
+from anvil_robot_profiles import DEFAULT_PROFILE, DRIVEN_ARM, load_profile
 from scipy.spatial.transform import Rotation
 
-FINGER_JOINT = "follower_r_finger_joint1"
 JOINT_STATES_TOPIC = "/joint_states"
 EE_POSE_TOPIC = "/ee_pose_right"
 CSV_COLUMNS = (
@@ -265,6 +265,7 @@ def _bag_uri(episode_dir: Path) -> str:
 
 def read_episode(
     episode_dir: Path,
+    finger_joint: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Stream the finger joint and TCP pose topics out of one rosbag2 MCAP episode.
 
@@ -273,6 +274,7 @@ def read_episode(
 
     Args:
         episode_dir: Episode directory holding the MCAP bag.
+        finger_joint: Gripper joint name in ``/joint_states``.
 
     Returns:
         ``(finger_times, finger, ee_times, ee_poses)`` with times in seconds
@@ -307,9 +309,9 @@ def read_episode(
         msg = deserialize_message(data, msg_types[topic])
         t = stamp_ns * 1e-9
         if topic == JOINT_STATES_TOPIC:
-            if FINGER_JOINT in msg.name:
+            if finger_joint in msg.name:
                 finger_times.append(t)
-                finger.append(msg.position[msg.name.index(FINGER_JOINT)])
+                finger.append(msg.position[msg.name.index(finger_joint)])
         else:
             p, q = msg.pose.position, msg.pose.orientation
             ee_times.append(t)
@@ -332,7 +334,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--out-dir", type=Path, required=True, help="where to write the YAML and CSV"
     )
+    parser.add_argument(
+        "--robot-profile",
+        default=DEFAULT_PROFILE,
+        help="robot profile the episodes were recorded under: shipped name or yaml path",
+    )
     args = parser.parse_args(argv)
+    finger_joint = load_profile(args.robot_profile).arms[DRIVEN_ARM].gripper_joint
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     episode_dirs = sorted(p for p in args.recordings.iterdir() if p.is_dir())
@@ -340,7 +348,7 @@ def main(argv: list[str] | None = None) -> None:
     for i, episode_dir in enumerate(episode_dirs, start=1):
         name = episode_dir.name
         try:
-            result = mine_episode(name, *read_episode(episode_dir))
+            result = mine_episode(name, *read_episode(episode_dir, finger_joint))
         except Exception as exc:  # one bad bag must not stop the batch
             logger.warning("[%d/%d] %s: unreadable, skipped (%s)", i, len(episode_dirs), name, exc)
             continue

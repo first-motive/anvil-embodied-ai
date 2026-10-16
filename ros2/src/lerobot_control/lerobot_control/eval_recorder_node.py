@@ -2,8 +2,8 @@
 
 Subscribes to:
   /eval/episode_start   — signals start of a new episode (JSON: {episode_idx, split_label})
-  /follower_*/commands  — GT actions from MCAP replay
-  /eval/follower_*/commands — predicted actions from inference node (eval config)
+  /<arm_controller>/commands  — GT actions from MCAP replay
+  /eval/<arm_controller>/commands — predicted actions from inference node (eval config)
   /eval/eval_complete   — signals all episodes done
 
 After each episode (detected by GT topic silence + inference drain):
@@ -29,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 import rclpy
+from anvil_robot_profiles import declare_robot_profile
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, Float64MultiArray, String
@@ -65,21 +66,12 @@ class EvalRecorderNode(Node):
     def __init__(self):
         super().__init__("eval_recorder")
 
-        # Parameters
-        self.declare_parameter(
-            "gt_topics",
-            [
-                "/follower_l_forward_position_controller/commands",
-                "/follower_r_forward_position_controller/commands",
-            ],
-        )
-        self.declare_parameter(
-            "pred_topics",
-            [
-                "/eval/follower_l_forward_position_controller/commands",
-                "/eval/follower_r_forward_position_controller/commands",
-            ],
-        )
+        # Parameters. Topic defaults are the profile's left and right arm controllers;
+        # the inference node publishes its predictions under /eval.
+        profile = declare_robot_profile(self)
+        default_gt = [profile.arms[arm].command_topic for arm in ("left", "right")]
+        self.declare_parameter("gt_topics", default_gt)
+        self.declare_parameter("pred_topics", [f"/eval{topic}" for topic in default_gt])
         self.declare_parameter("arm_names", ["left", "right"])
         self.declare_parameter(
             "controller_joint_order",

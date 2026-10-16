@@ -5,9 +5,12 @@ Configuration is loaded from a YAML config file that specifies:
 - Joint state mapping (filter and reorder joints)
 - Arm configuration (command topics and action indices)
 
+Joint and controller names come from the `robot_profile` (see anvil_robot_profiles).
+
 See configs/lerobot_control/inference_default.yaml for the default configuration.
 """
 
+from anvil_robot_profiles import DEFAULT_PROFILE
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
@@ -66,6 +69,13 @@ def generate_launch_description():
         description="Publish /monitor/obs_state, /monitor/raw_output, /monitor/control_cmd for inference_monitor_node",
     )
 
+    robot_profile_arg = DeclareLaunchArgument(
+        "robot_profile",
+        default_value=DEFAULT_PROFILE,
+        description="Robot profile naming joints and controllers: a name shipped in "
+        "anvil_robot_profiles or a path to a profile yaml",
+    )
+
     # Node
     inference_node = Node(
         package="lerobot_control",
@@ -84,6 +94,7 @@ def generate_launch_description():
                 "debug": LaunchConfiguration("debug"),
                 "debug_image_dir": LaunchConfiguration("debug_image_dir"),
                 "monitor_enable": LaunchConfiguration("monitor_enable"),
+                "robot_profile": LaunchConfiguration("robot_profile"),
             }
         ],
     )
@@ -100,6 +111,7 @@ def generate_launch_description():
             debug_arg,
             debug_image_dir_arg,
             monitor_enable_arg,
+            robot_profile_arg,
             inference_node,
         ]
     )

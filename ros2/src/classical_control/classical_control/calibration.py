@@ -532,7 +532,7 @@ def fit(
 
 def camera_yaml(
     result: CalibrationResult,
-    parent_frame: str = "follower_body_link0",
+    parent_frame: str,
     T_world_parent: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Express a fit in the ``config/camera_chest.yaml`` schema.
@@ -541,7 +541,7 @@ def camera_yaml(
         result: A calibration result.
         parent_frame: Frame the extrinsic is written relative to.
         T_world_parent: Pose of ``parent_frame`` in ``world``; identity by default, since
-            ``world`` and ``follower_body_link0`` coincide on this robot.
+            ``world`` and the robot's base frame coincide on the OpenArm.
 
     Returns:
         ``{"intrinsics": {...}, "extrinsic": {...}}`` with plain Python floats, ready for
