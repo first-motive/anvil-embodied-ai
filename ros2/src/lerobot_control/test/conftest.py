@@ -39,7 +39,7 @@ try:
 except ImportError:
     # These import the node through lerobot_control, which needs torch. Ignored rather
     # than skipped: under ROS's pytest plugins a module-level skip drops the whole run.
-    collect_ignore = ["test_profile_joints.py"]
+    collect_ignore = ["test_profile_joints.py", "test_shutdown_hold.py"]
 
 DEFAULT_CONFIG = (
     Path(__file__).resolve().parents[4] / "configs" / "lerobot_control" / "inference_default.yaml"
