@@ -1,0 +1,11 @@
+# Grasp and place targets for task_node in fm-sim, in the shape mine_episodes writes.
+# Not mined: no sim demonstrations exist yet. grasp_z is the TCP height at which the
+# real demos close (task.yaml, grasp_height_offset_m), place_z repeats it because the
+# can is set back on the same table, and the orientation is the measured home TCP
+# orientation, which level_grasp stands upright. Replace with values mined from sim
+# episodes, or tuned against the can scenario, before trusting a sim result.
+grasp_z:
+  median: 0.341
+place_z:
+  median: 0.341
+grasp_orientation_xyzw: [0.672, 0.064, 0.736, 0.055]

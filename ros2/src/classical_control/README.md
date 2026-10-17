@@ -95,16 +95,25 @@ Place the can and paper inside the blue outline in `/classical/debug/compressed`
 
 ### task_node
 
-Subscribes to `/ee_pose_right` and `/hardware_state_controller/state` (reliable),
-`/joint_states` and the two perception poses (best effort). Publishes
-`/commanded_ee_right` (`anvil_msgs/CommandedEEPose`) at `control_rate_hz` while a goal
-runs, and nothing otherwise.
+With `ee_interface: loader` (the default) it subscribes to `/ee_pose_right` and
+`/hardware_state_controller/state` (reliable), `/joint_states` and the two perception
+poses (best effort), and publishes `/commanded_ee_right` (`anvil_msgs/CommandedEEPose`)
+at `control_rate_hz` while a goal runs, and nothing otherwise.
+
+With `ee_interface: pose` (fm-sim) it publishes `/commanded_ee_right` as a
+`geometry_msgs/PoseStamped` in the robot profile's `base_frame`, reads the measured TCP
+from TF (`base_frame` to the driven arm's `ee_frame`), sends no gripper command and has
+no hardware gate. Its output is for fm-sim's `ee_follower` only, never real hardware:
+nothing on the real cell reads a `PoseStamped` on `/commanded_ee_right`, and without the
+loader's hardware gate the e-stop would not stop it. It refuses to start unless
+`use_sim_time` is true. `anvil_msgs` is imported only for `loader`.
 
 | Parameter | Type | Default | Notes |
 |---|---|---|---|
 | `mined_params_file` | string | `""` | Required; `mined_params.yaml` from `mine_episodes` |
 | `robot_profile` | string | `loader_openarm_v2` | Names the gripper joint; a profile from [anvil_robot_profiles](../anvil_robot_profiles/README.md) or a yaml path. Launch argument of the same name |
-| `frame_id` | string | `world` | |
+| `ee_interface` | string | `loader` | `loader` (Anvil loader, `anvil_msgs`) or `pose` (fm-sim EE follower, `PoseStamped`); any other value stops startup |
+| `frame_id` | string | `world` | Stamped on commands with `loader`; `pose` stamps the profile's `base_frame` |
 | `control_rate_hz` | double | 30.0 | |
 | `workspace_min_m`, `workspace_max_m` | double[3] | [0.05, -0.55, 0.0], [0.65, 0.15, 0.70] | TCP box; all 104 demo positions fall inside it |
 | `table_z`, `z_margin_m` | double | 0.207, 0.01 | TCP floor is `table_z + z_margin_m`; `table_z` is measured |
@@ -174,6 +183,26 @@ ARMS_CONTROL_CONFIG_FILE=openarm_v2_quest_teleop_commanded_ee.yaml
 
 then run `docker compose up -d` in `~/anvil-loader`. Set it back to
 `openarm_v2_inference.yaml` for policy runs.
+
+## Running In fm-sim
+
+The package registers the `classical` controller in fm-sim's catalog
+(`catalog/controllers/classical.yaml`, marker in `resource/fm_sim.controllers/`). Its
+include, `launch/sim.launch.py`, takes the `use_sim`, `robot_profile` and `scenario`
+arguments fm-sim passes and starts:
+
+- `task_node` with `ee_interface: pose`, the shipped `task.yaml`, and
+  `config/sim/mined_params.yaml`. That file is not mined: it holds starting values taken
+  from the real demos and the measured home orientation, to be replaced from sim data.
+- fm-sim's `ee_follower` (`fm_sim_ee_follower`), which turns the commanded pose into
+  joint positions for the right arm's forward position controller. It ships with fm-sim,
+  so it is not a `package.xml` dependency; the launch fails early without it.
+
+The entry activates the robot's `arm_forward_position` role and is listed with
+`available: false`, so `run.launch.py` refuses it, because a sim run cannot finish a pick
+yet: nothing in sim publishes `/classical/can_pose` or `/classical/paper_pose`, the
+`pose` interface does not command the gripper, and nothing sends the
+`/classical/pick_place` goal.
 
 ## Collecting Visuo-Tactile Episodes
 
@@ -357,5 +386,8 @@ PYTHONPATH=$PWD:$PWD/../anvil_robot_profiles uv run --no-project --with pytest -
     --with opencv-python-headless --with scipy --with pyyaml pytest test
 ```
 
-Or `colcon test --packages-select classical_control` in a Jazzy workspace. The
+Or `colcon test --packages-select classical_control` in a Jazzy workspace. The sim
+tests (`test_sim_catalog.py`, `test_sim_launch.py`, `test_task_node_pose.py`) need that
+installed workspace and skip under plain pytest; the catalog checks also skip without
+fm-sim's `fm_sim_bringup`, whose schema they validate against. The
 detector tests use three real chest frames and a median background in `test/fixtures/`.

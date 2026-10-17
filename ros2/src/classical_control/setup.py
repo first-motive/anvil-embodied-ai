@@ -13,7 +13,14 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
         ("share/" + package_name + "/config/objects", glob("config/objects/*.yaml")),
+        ("share/" + package_name + "/config/sim", glob("config/sim/*.yaml")),
         ("share/" + package_name + "/launch", glob("launch/*.py")),
+        # fm-sim catalog: each marker's content is its entry yaml's share path.
+        (
+            "share/ament_index/resource_index/fm_sim.controllers",
+            glob("resource/fm_sim.controllers/*"),
+        ),
+        ("share/" + package_name + "/catalog/controllers", glob("catalog/controllers/*.yaml")),
     ],
     python_requires=">=3.12",
     install_requires=["setuptools"],

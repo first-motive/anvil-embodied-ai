@@ -80,6 +80,17 @@ class HardwareStateGate:
         return changed
 
 
+class NoHardwareGate:
+    """The gate for the sim's `pose` interface, which has no loader to ask.
+
+    The sim has no `hardware_state_controller`, so there is no state to honour.
+    task_node only builds this gate when `use_sim_time` is set, and the fm-sim EE
+    follower applies its own input gate before any joint moves.
+    """
+
+    allows_commands = True
+
+
 class FreshnessGate:
     """Holds commands when an input has gone stale.
 

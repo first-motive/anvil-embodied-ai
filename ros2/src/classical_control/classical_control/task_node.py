@@ -6,6 +6,18 @@
     /joint_states          ─┤   (/classical/pick_place action)
     hardware_state         ─┘
 
+`ee_interface` picks how the node reaches the arm:
+
+- `loader` (default): the Anvil loader. `/commanded_ee_right` and `/ee_pose_right`
+  are `anvil_msgs/CommandedEEPose` (pose plus gripper), and the loader's
+  `hardware_state_controller` gates every command.
+- `pose`: the fm-sim EE follower. `/commanded_ee_right` is a `PoseStamped` in the
+  profile's `base_frame`, the measured pose is the TF from `base_frame` to the
+  driven arm's `ee_frame`, and the gripper is not commanded. There is no loader and
+  so no hardware gate, which is why this interface refuses to start without
+  `use_sim_time`. `anvil_msgs` is imported only for `loader`, so `pose` runs in an
+  image without the loader's proprietary messages.
+
 The node is wiring only. `task_machine.PickPlaceTask` decides what to command;
 this node localises, gates and clamps:
 
@@ -36,11 +48,10 @@ from __future__ import annotations
 import math
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import rclpy
 import yaml
-from anvil_msgs.msg import CommandedEEPose, HardwareState
-from anvil_msgs.srv import SetHardwareState
 from anvil_robot_profiles import DRIVEN_ARM, declare_robot_profile
 from classical_control_msgs.action import PickPlace
 from geometry_msgs.msg import PoseStamped
@@ -48,9 +59,18 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.task import Future
+from rclpy.time import Time
 from sensor_msgs.msg import JointState
+from tf2_ros import Buffer, TransformException, TransformListener
 
-from .safety import ACTIVE_STATE, FreshnessGate, HardwareStateGate, SafetyLimiter, SafetyLimits
+from .safety import (
+    ACTIVE_STATE,
+    FreshnessGate,
+    HardwareStateGate,
+    NoHardwareGate,
+    SafetyLimiter,
+    SafetyLimits,
+)
 from .task_machine import (
     ErrorCode,
     GoalOverrides,
@@ -66,6 +86,10 @@ from .task_machine import (
 )
 from .trajectory import Pose
 
+if TYPE_CHECKING:
+    # Imported at run time only for the loader interface; see PickPlaceNode.__init__.
+    from anvil_msgs.msg import CommandedEEPose, HardwareState
+
 COMMAND_TOPIC = "/commanded_ee_right"
 EE_POSE_TOPIC = "/ee_pose_right"
 JOINT_STATES_TOPIC = "/joint_states"
@@ -74,6 +98,8 @@ PAPER_POSE_TOPIC = "/classical/paper_pose"
 HARDWARE_STATE_TOPIC = "/hardware_state_controller/state"
 HARDWARE_STATE_SERVICE = "/hardware_state_controller/set_state"
 ACTION_NAME = "/classical/pick_place"
+#: Ways to reach the arm; the module docstring describes each.
+EE_INTERFACES = ("loader", "pose")
 
 #: Inputs that must stay fresh for the whole run.
 ARM_INPUTS = ("ee_pose", "finger")
@@ -81,6 +107,7 @@ ARM_INPUTS = ("ee_pose", "finger")
 #: Defaults for every parameter; config/task.yaml documents each one.
 PARAMETER_DEFAULTS = {
     "mined_params_file": "",
+    "ee_interface": "loader",
     "frame_id": "world",
     "control_rate_hz": 30.0,
     "workspace_min_m": [0.05, -0.55, 0.0],
@@ -138,9 +165,22 @@ class PickPlaceNode(Node):
         super().__init__("classical_task")
         self.declare_parameters("", list(PARAMETER_DEFAULTS.items()))
         param = {name: self.get_parameter(name).value for name in PARAMETER_DEFAULTS}
-        self._finger_joint = declare_robot_profile(self).arms[DRIVEN_ARM].gripper_joint
+        profile = declare_robot_profile(self)
+        arm = profile.arms[DRIVEN_ARM]
+        self._finger_joint = arm.gripper_joint
+        self._ee_interface = param["ee_interface"]
+        if self._ee_interface not in EE_INTERFACES:
+            raise ValueError(
+                f"ee_interface must be one of {', '.join(EE_INTERFACES)}, "
+                f"got {self._ee_interface!r}"
+            )
+        if self._ee_interface == "pose" and not self.get_parameter("use_sim_time").value:
+            raise ValueError(
+                "Refusing to start: ee_interface 'pose' has no hardware gate and is for "
+                "the sim only; set use_sim_time"
+            )
 
-        self._frame_id = param["frame_id"]
+        self._frame_id = param["frame_id"] if self._ee_interface == "loader" else profile.base_frame
         self._rate_hz = float(param["control_rate_hz"])
         self._limiter = SafetyLimiter(SafetyLimits.from_dict({k: param[k] for k in SAFETY_KEYS}))
         self._config = self._load_task_config(param)
@@ -151,7 +191,7 @@ class PickPlaceNode(Node):
         self._max_yaw_offset_rad = float(param["max_yaw_offset_rad"])
         self._max_closure_m = float(param["max_closure_m"])
 
-        self._gate = HardwareStateGate()
+        self._gate = HardwareStateGate() if self._ee_interface == "loader" else NoHardwareGate()
         self._freshness = FreshnessGate(float(param["pose_max_age_s"]))
         self._localisation = FreshnessGate(float(param["localise_max_age_s"]))
         self._measured: Pose | None = None
@@ -172,18 +212,35 @@ class PickPlaceNode(Node):
         # Best effort subscribers match both reliable and best-effort publishers.
         sensor = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
 
-        self._publisher = self.create_publisher(CommandedEEPose, COMMAND_TOPIC, reliable)
-        self.create_subscription(CommandedEEPose, EE_POSE_TOPIC, self._on_ee_pose, reliable)
+        self._tf_buffer: Buffer | None = None
+        self._ee_frame = arm.ee_frame
+        self._ee_stamp: tuple[int, int] | None = None
+        if self._ee_interface == "loader":
+            from anvil_msgs.msg import CommandedEEPose, HardwareState
+            from anvil_msgs.srv import SetHardwareState
+
+            self._command_type = CommandedEEPose
+            self.create_subscription(CommandedEEPose, EE_POSE_TOPIC, self._on_ee_pose, reliable)
+            self.create_subscription(
+                HardwareState,
+                HARDWARE_STATE_TOPIC,
+                self._on_hardware_state,
+                reliable,
+            )
+            self._state_client = self.create_client(SetHardwareState, HARDWARE_STATE_SERVICE)
+        else:
+            self._command_type = PoseStamped
+            self._tf_buffer = Buffer()
+            # Spun by this node's executor, so the single-threaded design holds.
+            self._tf_listener = TransformListener(self._tf_buffer, self)
+            self.get_logger().warning(
+                "ee_interface 'pose': the gripper is not commanded; "
+                f"{COMMAND_TOPIC} carries the tool pose in {self._frame_id}"
+            )
+        self._publisher = self.create_publisher(self._command_type, COMMAND_TOPIC, reliable)
         self.create_subscription(JointState, JOINT_STATES_TOPIC, self._on_joint_states, sensor)
         self.create_subscription(PoseStamped, CAN_POSE_TOPIC, self._on_can_pose, sensor)
         self.create_subscription(PoseStamped, PAPER_POSE_TOPIC, self._on_paper_pose, sensor)
-        self.create_subscription(
-            HardwareState,
-            HARDWARE_STATE_TOPIC,
-            self._on_hardware_state,
-            reliable,
-        )
-        self._state_client = self.create_client(SetHardwareState, HARDWARE_STATE_SERVICE)
         self._action_server = ActionServer(
             self,
             PickPlace,
@@ -228,15 +285,39 @@ class PickPlaceNode(Node):
     # ---- subscriptions -----------------------------------------------------
 
     def _on_ee_pose(self, message: CommandedEEPose) -> None:
+        """Measured TCP from the loader (`loader` interface)."""
+        p, q = message.pose.position, message.pose.orientation
+        self._update_measured([p.x, p.y, p.z], [q.x, q.y, q.z, q.w], EE_POSE_TOPIC)
+
+    def _read_ee_from_tf(self, buffer: Buffer) -> None:
+        """Measured TCP from TF (`pose` interface); called once per control tick.
+
+        Only a transform newer than the last one read counts as a sample, so a TF tree
+        that stops updating goes stale through the freshness gate like a silent topic.
+        """
         try:
-            pose = pose_from_message(message.pose)
+            transform = buffer.lookup_transform(self._frame_id, self._ee_frame, Time())
+        except TransformException:
+            return
+        stamp = (transform.header.stamp.sec, transform.header.stamp.nanosec)
+        if stamp == self._ee_stamp:
+            return
+        self._ee_stamp = stamp
+        t, q = transform.transform.translation, transform.transform.rotation
+        self._update_measured(
+            [t.x, t.y, t.z], [q.x, q.y, q.z, q.w], f"TF {self._frame_id} -> {self._ee_frame}"
+        )
+
+    def _update_measured(self, position: list, quat_xyzw: list, source: str) -> None:
+        try:
+            pose = Pose(position, quat_xyzw)
         except ValueError as error:
             # A corrupt measured pose is as unusable as a missing one: keep the
             # last good one out of reach of the clamp and hold the run.
             self._measured = None
             if self._task is not None:
                 self._task.fault(ErrorCode.STALE_POSE)
-            self.get_logger().error(f"Bad {EE_POSE_TOPIC}: {error}", throttle_duration_sec=1.0)
+            self.get_logger().error(f"Bad {source}: {error}", throttle_duration_sec=1.0)
             return
         self._measured = pose
         self._freshness.mark("ee_pose", time.monotonic())
@@ -277,7 +358,7 @@ class PickPlaceNode(Node):
         """Ask the controller for `active`; it publishes only on change and boots active."""
         if self._probe is None:
             if self._state_client.service_is_ready():
-                request = SetHardwareState.Request()
+                request = self._state_client.srv_type.Request()
                 request.state = ACTIVE_STATE
                 self._probe = self._state_client.call_async(request)
             return
@@ -463,6 +544,8 @@ class PickPlaceNode(Node):
     def _on_tick(self) -> None:
         if not self._gate.allows_commands and not self._probe_answered:
             self._probe_hardware_state()
+        if self._tf_buffer is not None:
+            self._read_ee_from_tf(self._tf_buffer)
 
         now = time.monotonic()
         task, goal_handle = self._task, self._goal_handle
@@ -505,8 +588,9 @@ class PickPlaceNode(Node):
             self._task = None
             self._finished.set_result(task.result)
 
-    def _build_message(self, pose: Pose, gripper: float) -> CommandedEEPose:
-        message = CommandedEEPose()
+    def _build_message(self, pose: Pose, gripper: float) -> CommandedEEPose | PoseStamped:
+        """A CommandedEEPose (`loader`) or a PoseStamped (`pose`, gripper dropped)."""
+        message = self._command_type()
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = self._frame_id
         x, y, z = (float(v) for v in pose.position)
@@ -514,7 +598,8 @@ class PickPlaceNode(Node):
         message.pose.position.x, message.pose.position.y, message.pose.position.z = x, y, z
         orientation = message.pose.orientation
         orientation.x, orientation.y, orientation.z, orientation.w = qx, qy, qz, qw
-        message.gripper = gripper
+        if self._ee_interface == "loader":
+            message.gripper = gripper
         return message
 
 
