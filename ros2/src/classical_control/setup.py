@@ -15,6 +15,8 @@ setup(
         ("share/" + package_name + "/config/objects", glob("config/objects/*.yaml")),
         ("share/" + package_name + "/config/sim", glob("config/sim/*.yaml")),
         ("share/" + package_name + "/launch", glob("launch/*.py")),
+        ("share/" + package_name + "/control", glob("control/*.yaml")),
+        ("share/" + package_name + "/backgrounds", glob("backgrounds/*.png")),
         # fm-sim catalog: each marker's content is its entry yaml's share path.
         (
             "share/ament_index/resource_index/fm_sim.controllers",
@@ -39,6 +41,7 @@ setup(
             "overlay_check = classical_control.overlay_check:main",
             "calibrate_chest = classical_control.calibrate_chest:main",
             "collect_node = classical_control.collect_node:main",
+            "control_descriptor = classical_control.descriptor_node:main",
         ],
     },
 )

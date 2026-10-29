@@ -13,7 +13,7 @@ import pytest
 PACKAGE = "classical_control"
 RESOURCE_TYPE = "fm_sim.controllers"
 # Entry name -> whether run.launch.py may start it.
-EXPECTED = {"classical": False}
+EXPECTED = {"anvil_classical": False}
 
 
 @pytest.fixture(scope="module")
@@ -62,8 +62,10 @@ def test_fm_sim_loads_and_validates_the_entry(index, fm_sim_catalog, name):
     assert entry["available"] is EXPECTED[name]
 
 
-def test_classical_launch_is_installed_and_needs_the_forward_position_role(index, fm_sim_catalog):
-    entry = fm_sim_catalog.load("controllers", "classical")
+def test_anvil_classical_launch_is_installed_and_needs_the_forward_position_role(
+    index, fm_sim_catalog
+):
+    entry = fm_sim_catalog.load("controllers", "anvil_classical")
     # The EE follower streams the profile's arm_controller, which the openarm robot
     # entry files under arm_forward_position.
     assert entry["activate"] == ["arm_forward_position"]
@@ -72,4 +74,12 @@ def test_classical_launch_is_installed_and_needs_the_forward_position_role(index
 
 def test_fm_sim_refuses_the_unavailable_entry(index, fm_sim_catalog):
     with pytest.raises(fm_sim_catalog.CatalogError, match="not available"):
-        fm_sim_catalog.require_available("controllers", "classical")
+        fm_sim_catalog.require_available("controllers", "anvil_classical")
+
+
+def test_anvil_classical_is_in_the_anvil_family_and_drawn_by_its_descriptor(index, fm_sim_catalog):
+    entry = fm_sim_catalog.load("controllers", "anvil_classical")
+    assert entry["family"] == "anvil"
+    assert entry["control"] == {"package": PACKAGE, "path": "control/anvil_classical.yaml"}
+    # The loader validated the file against the schema and attached it.
+    assert entry["control_descriptor"]["name"] == "anvil_classical"
