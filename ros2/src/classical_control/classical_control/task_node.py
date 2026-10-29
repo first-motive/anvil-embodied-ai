@@ -4,7 +4,7 @@
     /classical/paper_pose  ─┤
     /ee_pose_right         ─┼─▶ task_node ──▶ /commanded_ee_right
     /joint_states          ─┤   (/classical/pick_place action)
-    hardware_state         ─┘
+    hardware_state         ─┘          └─▶ /classical/phase
 
 `ee_interface` picks how the node reaches the arm:
 
@@ -34,6 +34,10 @@ this node localises, gates and clamps:
   is seeded from the measured `/ee_pose_right` at goal start, and the task's
   first command is that same pose, so a run never starts with a jump.
 - HOME is commanded through the same stream; the arms resetter is never called.
+- Each phase change goes out twice: as the action's `phase` feedback, and as the
+  phase name on `/classical/phase` (`std_msgs/String`, latched). The plain topic is
+  what the desktop reads: a Zenoh bridge carries action feedback only by bridging the
+  whole action server, which would also expose goals to the fabric.
 
 Everything runs on a SingleThreadedExecutor. The execute callback is a
 coroutine that awaits a future the control timer resolves when the task ends,
@@ -57,10 +61,11 @@ from classical_control_msgs.action import PickPlace
 from geometry_msgs.msg import PoseStamped
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.task import Future
 from rclpy.time import Time
 from sensor_msgs.msg import JointState
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from .safety import (
@@ -98,6 +103,7 @@ PAPER_POSE_TOPIC = "/classical/paper_pose"
 HARDWARE_STATE_TOPIC = "/hardware_state_controller/state"
 HARDWARE_STATE_SERVICE = "/hardware_state_controller/set_state"
 ACTION_NAME = "/classical/pick_place"
+PHASE_TOPIC = "/classical/phase"
 #: Ways to reach the arm; the module docstring describes each.
 EE_INTERFACES = ("loader", "pose")
 
@@ -241,6 +247,13 @@ class PickPlaceNode(Node):
         self.create_subscription(JointState, JOINT_STATES_TOPIC, self._on_joint_states, sensor)
         self.create_subscription(PoseStamped, CAN_POSE_TOPIC, self._on_can_pose, sensor)
         self.create_subscription(PoseStamped, PAPER_POSE_TOPIC, self._on_paper_pose, sensor)
+        # Latched, so a viewer that subscribes mid-run still sees the current phase.
+        latched = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self._phase_publisher = self.create_publisher(String, PHASE_TOPIC, latched)
         self._action_server = ActionServer(
             self,
             PickPlace,
@@ -517,6 +530,7 @@ class PickPlaceNode(Node):
         feedback = PickPlace.Feedback()
         feedback.phase = int(phase)
         goal_handle.publish_feedback(feedback)
+        self._phase_publisher.publish(String(data=phase.name))
 
     def _log_plan(self, task: PickPlaceTask, overrides: GoalOverrides | None) -> None:
         """Log the planned waypoints; `overrides` is None for a home-only goal."""

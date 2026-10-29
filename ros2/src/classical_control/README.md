@@ -14,7 +14,7 @@ beat on the same task, so it deliberately has no retry and no closed-loop servoi
 /ee_pose_right ───────────────────┐
 /joint_states ────────────────────┤
 /hardware_state_controller/state ─┼─▶ task_node ─▶ /commanded_ee_right
-/classical/{can,paper}_pose ──────┘   action /classical/pick_place
+/classical/{can,paper}_pose ──────┘   action /classical/pick_place ─▶ /classical/phase
 ```
 
 The loader's IK follows `/commanded_ee_right`, so there is no IK or MoveIt here.
@@ -100,6 +100,11 @@ With `ee_interface: loader` (the default) it subscribes to `/ee_pose_right` and
 poses (best effort), and publishes `/commanded_ee_right` (`anvil_msgs/CommandedEEPose`)
 at `control_rate_hz` while a goal runs, and nothing otherwise.
 
+On every phase change it also publishes the phase name (`LOCALISE` … `HOME`, `HOLD`) on
+`/classical/phase` (`std_msgs/String`, reliable, transient local, depth 1), mirroring the
+action feedback. Viewers read this topic: a Zenoh bridge carries action feedback only by
+bridging the whole action server, which would also let the fabric send goals.
+
 With `ee_interface: pose` (fm-sim) it publishes `/commanded_ee_right` as a
 `geometry_msgs/PoseStamped` in the robot profile's `base_frame`, reads the measured TCP
 from TF (`base_frame` to the driven arm's `ee_frame`), sends no gripper command and has
@@ -144,6 +149,7 @@ loader's hardware gate the e-stop would not stop it. It refuses to start unless
 | `eval_offline --recordings DIR --ground-truth CSV --camera-yaml YAML --out-dir DIR` | Detection rate and xy error against the demos, plus a PnP-fitted extrinsic |
 | `overlay_check --camera-yaml YAML` | Draws the live TCP and a table grid on one chest frame |
 | `calibrate_chest --camera-yaml YAML --task-params YAML` | Sweeps the arm with a hand marker and fits the chest camera; `--dry-run`, `--fit-only` |
+| `control_descriptor --ros-args -p control_file:=FILE` | Publishes a control descriptor latched on `/control/descriptor`; both launches start it |
 | `collect_node --object NAME ...` | Unattended pick and random re-place loop, one MCAP episode per cycle; see [Collecting Visuo-Tactile Episodes](#collecting-visuo-tactile-episodes) |
 
 ## Running On The Robot
@@ -156,7 +162,7 @@ to `data/classical/`, which is gitignored.
 ./scripts/run_classical.sh mine         # data/classical/mined_params.yaml + ground_truth.csv
 ./scripts/run_classical.sh calibrate --marker-id 1 --marker-size 0.04   # see below
 ./scripts/run_classical.sh eval         # data/classical/eval/eval_report.yaml
-./scripts/run_classical.sh up           # start both nodes
+./scripts/run_classical.sh up           # start perception, task and the control descriptor
 ./scripts/run_classical.sh background   # with the table empty
 ./scripts/run_classical.sh trial --dry-run
 ./scripts/run_classical.sh trial --n 20 --speed 0.5
@@ -186,23 +192,59 @@ then run `docker compose up -d` in `~/anvil-loader`. Set it back to
 
 ## Running In fm-sim
 
-The package registers the `classical` controller in fm-sim's catalog
-(`catalog/controllers/classical.yaml`, marker in `resource/fm_sim.controllers/`). Its
-include, `launch/sim.launch.py`, takes the `use_sim`, `robot_profile` and `scenario`
-arguments fm-sim passes and starts:
+The package registers the `anvil_classical` controller (family `anvil`) in fm-sim's
+catalog (`catalog/controllers/anvil_classical.yaml`, marker in
+`resource/fm_sim.controllers/`). Its include, `launch/sim.launch.py`, takes the
+`use_sim`, `robot_profile` and `scenario` arguments fm-sim passes, reads the run's
+`backend` (fm-sim's include does not scope launch configurations), and starts:
 
+- `perception_node` with `config/sim/camera_chest.yaml` and the backend's background,
+  `backgrounds/<backend>_openarm_chest.png`. The camera file keeps the real intrinsics,
+  which fm-sim renders with, but mounts `cam_chest_optical` on the sim description's
+  `chest_cam` (identity), since the sim mount is not the calibrated one.
 - `task_node` with `ee_interface: pose`, the shipped `task.yaml`, and
   `config/sim/mined_params.yaml`. That file is not mined: it holds starting values taken
   from the real demos and the measured home orientation, to be replaced from sim data.
 - fm-sim's `ee_follower` (`fm_sim_ee_follower`), which turns the commanded pose into
   joint positions for the right arm's forward position controller. It ships with fm-sim,
   so it is not a `package.xml` dependency; the launch fails early without it.
+- `control_descriptor`, which publishes the control descriptor (see below).
+- On `can_on_table`, one `/classical/pick_place` goal, sent once the first can pose
+  arrives, with `place_target` at the scenario's paper. The background shows the paper,
+  so perception finds the can only; the descriptor marks that as a sim stand-in.
 
 The entry activates the robot's `arm_forward_position` role and is listed with
-`available: false`, so `run.launch.py` refuses it, because a sim run cannot finish a pick
-yet: nothing in sim publishes `/classical/can_pose` or `/classical/paper_pose`, the
-`pose` interface does not command the gripper, and nothing sends the
-`/classical/pick_place` goal.
+`available: false`, so `run.launch.py` refuses it. On the openarm robot that
+controller takes the seven arm joints and then the finger, and the EE follower
+publishes the arm joints alone, so it can neither move the arm nor close the gripper.
+
+### Sim Backgrounds
+
+`tools/render_background.py` renders a backend's reference from fm-sim's `table_only`
+scenario (`can_on_table` without the can): it starts an `idle` run, waits for the scene
+to settle and saves the latest chest frame. Run it inside the fm-sim-controllers image
+with fm-sim and this package sourced, then commit the image it writes:
+
+```bash
+python3 tools/render_background.py --backend mujoco   # or gazebo
+```
+
+`mujoco` and `gazebo` are rendered. Isaac is not: it needs an NVIDIA GPU, and the
+launch refuses `backend:=isaac` until its reference exists. Re-render after a change to
+the robot model, the cameras, or the scenario's table and paper.
+
+### Control Descriptor
+
+`control/anvil_classical.yaml` draws the pipeline (perception, the PickPlace state
+machine read from `/classical/phase`, skill, motion) in fm-sim's `control_descriptor`
+schema. It watches only plain topics a comms bridge carries: `/classical/can_pose` and
+`/classical/phase`. Motion has no live topic, since `/commanded_ee_right` is a command
+stream and is never bridged. The catalog entry names it for a pre-run view. The
+`control_descriptor` node, started by both `classical.launch.py` and `sim.launch.py`,
+publishes it as JSON (`std_msgs/String`, transient local, reliable, depth 1) on
+`/control/descriptor`, so a viewer reads it the same way on the robot and in sim.
+Validate it with
+`ros2 run fm_sim_bringup catalog --check-control control/anvil_classical.yaml`.
 
 ## Collecting Visuo-Tactile Episodes
 
@@ -391,3 +433,11 @@ tests (`test_sim_catalog.py`, `test_sim_launch.py`, `test_task_node_pose.py`) ne
 installed workspace and skip under plain pytest; the catalog checks also skip without
 fm-sim's `fm_sim_bringup`, whose schema they validate against. The
 detector tests use three real chest frames and a median background in `test/fixtures/`.
+`test_controller_parity.py` fails when a robot launch publishes no descriptor in
+`control/`, or a descriptor, a robot launch and a sim catalog entry do not pair up. It
+reads the source tree only; the
+[`controller-parity` workflow](../../../.github/workflows/controller-parity.yml) runs it
+on every change to this package, and its last step is the command to run it locally.
+
+`test_sim_background.py` localises the seed-0 can in a rendered `can_on_table` frame per
+backend (`test/fixtures/sim/`) against the baked background, within 25 mm.

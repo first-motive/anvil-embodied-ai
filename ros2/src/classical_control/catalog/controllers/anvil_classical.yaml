@@ -1,0 +1,21 @@
+# Catalog entry (fm_sim.controllers): the classical look-then-move baseline. Its sim
+# launch starts perception_node against a rendered background (backgrounds/), task_node
+# on the pose interface, fm-sim's EE follower, which streams the right arm's forward
+# position controller, and sends one pick_place goal once the can is seen. Listed but
+# refused: on the openarm robot the forward position controller takes the seven arm
+# joints and then the finger, and the follower publishes the arm joints alone, so it
+# cannot drive the arm or close the gripper.
+name: anvil_classical
+family: anvil
+description: >-
+  Anvil classical look-then-move can pick and place through the EE follower.
+  Not available: fm-sim's EE follower publishes the arm joints only, and the openarm
+  forward position controller also needs the finger, so the arm cannot move or grasp
+available: false
+activate: [arm_forward_position]
+launch:
+  package: classical_control
+  path: launch/sim.launch.py
+control:
+  package: classical_control
+  path: control/anvil_classical.yaml

@@ -1,0 +1,22 @@
+# Chest camera model for perception_node in fm-sim (camera_config_file in sim.launch.py).
+#
+# Intrinsics are the real camera's (config/camera_chest.yaml): fm-sim renders the chest
+# camera with them (fm_sim_bringup config/openarm/cameras.yaml).
+#
+# The extrinsic is not the real calibration. The sim robot description already carries
+# cam_chest_optical on its chest_cam link, about 1.5 cm and 8 deg off the calibrated
+# mount, so this file publishes the same identity chest_cam -> cam_chest_optical
+# transform the description does: one parent, the sim's own mount.
+intrinsics:
+  width: 1920
+  height: 1080
+  fx: 740.244
+  fy: 750.103
+  cx: 958.504
+  cy: 573.152
+  distortion: [0.111681, -0.028494, 0.0, 0.0]
+
+extrinsic:
+  parent_frame: chest_cam
+  translation_xyz: [0.0, 0.0, 0.0]
+  rotation_xyzw: [0.0, 0.0, 0.0, 1.0]

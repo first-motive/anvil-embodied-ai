@@ -1,0 +1,35 @@
+# Control descriptor (fm-sim schema control_descriptor): the classical look-then-move
+# can pick and place. classical.launch.py (robot) and sim.launch.py (fm-sim) publish it
+# as JSON, latched, on /control/descriptor; the anvil_classical catalog entry names it
+# for the pre-run view.
+name: anvil_classical
+blocks:
+  - id: perception
+    kind: perception
+    variant: background difference, chest camera
+    live: /classical/can_pose
+    # The sim reference is a rendered table_only frame, which shows the paper, so the
+    # paper is part of the background and is never detected; the episode goal places
+    # at the scenario's paper instead.
+    sim: {variant: "background difference on a rendered reference, can only"}
+  - id: task
+    kind: state_machine
+    variant: look-then-move pick and place
+    live: /classical/phase
+    states: [LOCALISE, PRE_GRASP, DESCEND, CLOSE, LIFT, TRANSIT, LOWER, OPEN, RETREAT, HOME, HOLD]
+    # task_node mirrors the PickPlace feedback phase here by name: a plain topic, since
+    # a Zenoh bridge carries action feedback only with the whole action server.
+    source: {topic: /classical/phase, type: std_msgs/msg/String, field: data}
+  - id: skill
+    kind: skill
+    variant: fixed Cartesian waypoints at grasp and place heights mined from 104 demos
+  - id: motion
+    kind: motion
+    variant: TCP pose stream to the Anvil loader's IK
+    # No live topic: /commanded_ee_right is a command stream, which the comms bridge
+    # never carries, and there is no plain motion topic on both robot and sim.
+    sim: {variant: fm-sim EE follower (DLS IK)}
+edges:
+  - {from: perception, to: task}
+  - {from: task, to: skill}
+  - {from: skill, to: motion}
