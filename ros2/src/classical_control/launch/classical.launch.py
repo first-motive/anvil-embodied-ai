@@ -1,4 +1,6 @@
-"""Starts the classical baseline: perception_node and the pick-place task node.
+"""Starts the classical baseline: perception_node, the pick-place task node, and the
+control descriptor, published latched on /control/descriptor (control/anvil_classical.yaml,
+the same file the fm-sim entry draws).
 
 `config_dir` defaults to the package's installed config. The container points it
 at the repo's config directory instead, mounted read-only, so a calibration edit
@@ -59,6 +61,22 @@ def generate_launch_description() -> LaunchDescription:
                         "mined_params_file": PathJoinSubstitution([data_dir, "mined_params.yaml"]),
                         "robot_profile": robot_profile,
                     },
+                ],
+            ),
+            Node(
+                package="classical_control",
+                executable="control_descriptor",
+                output="screen",
+                parameters=[
+                    {
+                        "control_file": PathJoinSubstitution(
+                            [
+                                FindPackageShare("classical_control"),
+                                "control",
+                                "anvil_classical.yaml",
+                            ]
+                        )
+                    }
                 ],
             ),
         ]

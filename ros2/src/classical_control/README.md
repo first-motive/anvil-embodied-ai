@@ -157,7 +157,7 @@ to `data/classical/`, which is gitignored.
 ./scripts/run_classical.sh mine         # data/classical/mined_params.yaml + ground_truth.csv
 ./scripts/run_classical.sh calibrate --marker-id 1 --marker-size 0.04   # see below
 ./scripts/run_classical.sh eval         # data/classical/eval/eval_report.yaml
-./scripts/run_classical.sh up           # start both nodes
+./scripts/run_classical.sh up           # start perception, task and the control descriptor
 ./scripts/run_classical.sh background   # with the table empty
 ./scripts/run_classical.sh trial --dry-run
 ./scripts/run_classical.sh trial --n 20 --speed 0.5
@@ -232,10 +232,11 @@ the robot model, the cameras, or the scenario's table and paper.
 
 `control/anvil_classical.yaml` draws the pipeline (perception, the PickPlace state
 machine read from the action feedback `phase`, skill, motion) in fm-sim's
-`control_descriptor` schema. The catalog entry names it for a pre-run view, and the
-`control_descriptor` node publishes it as JSON (`std_msgs/String`, transient local,
-reliable, depth 1) on `/control/descriptor`, so a viewer reads it the same way on the
-robot and in sim. Validate it with
+`control_descriptor` schema. The catalog entry names it for a pre-run view. The
+`control_descriptor` node, started by both `classical.launch.py` and `sim.launch.py`,
+publishes it as JSON (`std_msgs/String`, transient local, reliable, depth 1) on
+`/control/descriptor`, so a viewer reads it the same way on the robot and in sim.
+Validate it with
 `ros2 run fm_sim_bringup catalog --check-control control/anvil_classical.yaml`.
 
 ## Collecting Visuo-Tactile Episodes

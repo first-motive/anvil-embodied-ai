@@ -4,7 +4,6 @@ fm-sim's run.launch.py includes it with ``use_sim``, ``robot_profile`` and ``sce
 ``backend`` reaches it from the run's own launch configurations.
 """
 
-import importlib.util
 import os
 from pathlib import Path
 
@@ -19,16 +18,8 @@ PROFILE = "fm_openarm_v2"
 
 
 @pytest.fixture(scope="module")
-def sim_launch():
-    try:
-        share = packages.get_package_share_directory("classical_control")
-    except packages.PackageNotFoundError:
-        pytest.skip("classical_control is not installed; run under colcon test")
-    path = os.path.join(share, "launch", "sim.launch.py")
-    spec = importlib.util.spec_from_file_location("classical_control_sim_launch", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def sim_launch(launch_tools):
+    return launch_tools.load("sim.launch.py")
 
 
 @pytest.fixture
@@ -65,14 +56,6 @@ def _setup(sim_launch, **arguments):
     return context, sim_launch._launch_setup(context)
 
 
-def _nodes(actions):
-    return {
-        action.node_executable: action
-        for action in actions
-        if isinstance(action, launch_ros_actions.Node)
-    }
-
-
 def _command(process, context):
     return [launch.utilities.perform_substitutions(context, part) for part in process.cmd]
 
@@ -87,22 +70,6 @@ def _processes(actions):
     ]
 
 
-def _parameters(node, context):
-    # launch_ros has no public getter for a node's parameters: it expands each entry
-    # to a yaml file (dicts written out, file entries as given), recorded privately.
-    node._perform_substitutions(context)
-    expanded = getattr(node, "_Node__expanded_parameter_arguments", None)
-    assert expanded is not None, "launch_ros no longer has Node.__expanded_parameter_arguments"
-    parameters, files = {}, []
-    for path, is_file in expanded:
-        assert is_file
-        with open(path) as handle:
-            loaded = yaml.safe_load(handle)
-        files.append(path)
-        parameters.update(next(iter(loaded.values()))["ros__parameters"])
-    return parameters, files
-
-
 def test_declares_the_run_arguments_and_the_inherited_backend(sim_launch):
     assert set(_declared(sim_launch)) == {"use_sim", "robot_profile", "scenario", "backend"}
     assert _declared(sim_launch)["robot_profile"].default_value is None
@@ -111,11 +78,12 @@ def test_declares_the_run_arguments_and_the_inherited_backend(sim_launch):
 
 
 @pytest.mark.usefixtures("follower_installed")
-def test_sim_run_starts_task_node_on_the_pose_interface_and_the_follower(sim_launch):
+def test_sim_run_starts_task_node_on_the_pose_interface_and_the_follower(launch_tools, sim_launch):
     context, actions = _setup(sim_launch, use_sim="true", robot_profile=PROFILE)
-    task, follower = _nodes(actions)["task_node"], _nodes(actions)["ee_follower"]
+    nodes = launch_tools.nodes(actions)
+    task, follower = nodes["task_node"], nodes["ee_follower"]
     assert (task.node_package, task.node_executable) == ("classical_control", "task_node")
-    parameters, files = _parameters(task, context)
+    parameters, files = launch_tools.parameters(task, context)
     assert os.path.basename(files[0]) == "task.yaml"
     assert parameters["ee_interface"] == "pose"
     assert parameters["robot_profile"] == PROFILE
@@ -130,15 +98,20 @@ def test_sim_run_starts_task_node_on_the_pose_interface_and_the_follower(sim_lau
         "fm_sim_ee_follower",
         "ee_follower",
     )
-    assert _parameters(follower, context)[0] == {"robot_profile": PROFILE, "use_sim_time": True}
+    assert launch_tools.parameters(follower, context)[0] == {
+        "robot_profile": PROFILE,
+        "use_sim_time": True,
+    }
 
 
 @pytest.mark.usefixtures("follower_installed")
-def test_use_sim_false_leaves_every_clocked_node_on_wall_time(sim_launch):
+def test_use_sim_false_leaves_every_clocked_node_on_wall_time(launch_tools, sim_launch):
     context, actions = _setup(sim_launch, robot_profile=PROFILE)
-    nodes = _nodes(actions)
+    nodes = launch_tools.nodes(actions)
     del nodes["control_descriptor"]  # publishes once; it has no clock to set
-    assert {_parameters(node, context)[0]["use_sim_time"] for node in nodes.values()} == {False}
+    assert {
+        launch_tools.parameters(node, context)[0]["use_sim_time"] for node in nodes.values()
+    } == {False}
 
 
 @pytest.mark.usefixtures("follower_installed")
@@ -177,9 +150,12 @@ def test_fails_before_starting_anything_without_the_follower(sim_launch, monkeyp
 
 @pytest.mark.usefixtures("follower_installed")
 @pytest.mark.parametrize("backend", ["mujoco", "gazebo"])
-def test_perception_runs_on_the_sim_camera_and_the_backend_background(sim_launch, backend):
+def test_perception_runs_on_the_sim_camera_and_the_backend_background(
+    launch_tools, sim_launch, backend
+):
     context, actions = _setup(sim_launch, use_sim="true", robot_profile=PROFILE, backend=backend)
-    parameters, files = _parameters(_nodes(actions)["perception_node"], context)
+    perception = launch_tools.nodes(actions)["perception_node"]
+    parameters, files = launch_tools.parameters(perception, context)
     assert os.path.basename(files[0]) == "perception.yaml"
     assert parameters["background_file"].endswith(f"backgrounds/{backend}_openarm_chest.png")
     assert os.path.isfile(parameters["background_file"])
@@ -196,9 +172,10 @@ def test_refuses_a_backend_with_no_rendered_background(sim_launch):
 
 
 @pytest.mark.usefixtures("follower_installed")
-def test_publishes_the_installed_descriptor(sim_launch):
+def test_publishes_the_installed_descriptor(launch_tools, sim_launch):
     context, actions = _setup(sim_launch, use_sim="true", robot_profile=PROFILE)
-    control_file = _parameters(_nodes(actions)["control_descriptor"], context)[0]["control_file"]
+    descriptor = launch_tools.nodes(actions)["control_descriptor"]
+    control_file = launch_tools.parameters(descriptor, context)[0]["control_file"]
     assert yaml.safe_load(Path(control_file).read_text())["name"] == "anvil_classical"
 
 
