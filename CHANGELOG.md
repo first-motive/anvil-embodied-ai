@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `task_node` mirrors the PickPlace phase name, latched, on `/classical/phase` (`std_msgs/String`); the `anvil_classical` descriptor's state machine reads it there, and the descriptor watches only bridgeable plain topics (no action feedback, no `/commanded_ee_right`)
 - Add the `controller-parity` CI workflow: fails when a `classical_control` robot launch has no control descriptor or a descriptor has no fm-sim catalog entry
 - `classical.launch.py` publishes the `anvil_classical` control descriptor latched on `/control/descriptor`, as the sim launch does
 - Add the `anvil_classical` fm-sim controller (family `anvil`, still unavailable: the EE follower does not drive the finger): its sim launch runs `perception_node` against a background rendered per backend from fm-sim's `table_only` (`tools/render_background.py`, mujoco and gazebo), sends one `pick_place` goal and publishes `control/anvil_classical.yaml` on `/control/descriptor` through the new `control_descriptor` node

@@ -15,18 +15,19 @@ blocks:
   - id: task
     kind: state_machine
     variant: look-then-move pick and place
+    live: /classical/phase
     states: [LOCALISE, PRE_GRASP, DESCEND, CLOSE, LIFT, TRANSIT, LOWER, OPEN, RETREAT, HOME, HOLD]
-    source:
-      topic: /classical/pick_place/_action/feedback
-      type: classical_control_msgs/action/PickPlace
-      field: feedback.phase
+    # task_node mirrors the PickPlace feedback phase here by name: a plain topic, since
+    # a Zenoh bridge carries action feedback only with the whole action server.
+    source: {topic: /classical/phase, type: std_msgs/msg/String, field: data}
   - id: skill
     kind: skill
     variant: fixed Cartesian waypoints at grasp and place heights mined from 104 demos
   - id: motion
     kind: motion
     variant: TCP pose stream to the Anvil loader's IK
-    live: /commanded_ee_right
+    # No live topic: /commanded_ee_right is a command stream, which the comms bridge
+    # never carries, and there is no plain motion topic on both robot and sim.
     sim: {variant: fm-sim EE follower (DLS IK)}
 edges:
   - {from: perception, to: task}

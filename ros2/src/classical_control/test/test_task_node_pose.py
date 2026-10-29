@@ -7,6 +7,7 @@ sourced Jazzy workspace with classical_control and its action built.
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,14 +17,16 @@ rclpy = pytest.importorskip("rclpy")
 
 from anvil_robot_profiles import DRIVEN_ARM, load_profile  # noqa: E402
 from builtin_interfaces.msg import Time  # noqa: E402
-from classical_control.task_machine import ErrorCode  # noqa: E402
-from classical_control.task_node import COMMAND_TOPIC, PickPlaceNode  # noqa: E402
+from classical_control.task_machine import ErrorCode, Phase  # noqa: E402
+from classical_control.task_node import COMMAND_TOPIC, PHASE_TOPIC, PickPlaceNode  # noqa: E402
 from classical_control_msgs.action import PickPlace  # noqa: E402
 from geometry_msgs.msg import PoseStamped, TransformStamped  # noqa: E402
 from rclpy.action import ActionClient  # noqa: E402
 from rclpy.executors import SingleThreadedExecutor  # noqa: E402
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: E402
 from rosgraph_msgs.msg import Clock  # noqa: E402
 from sensor_msgs.msg import JointState  # noqa: E402
+from std_msgs.msg import String  # noqa: E402
 from tf2_msgs.msg import TFMessage  # noqa: E402
 
 PROFILE = load_profile("fm_openarm_v2")
@@ -80,6 +83,16 @@ class _Sim:
         self.joints = self.node.create_publisher(JointState, "/joint_states", 10)
         self.commands: list[PoseStamped] = []
         self.node.create_subscription(PoseStamped, COMMAND_TOPIC, self.commands.append, 10)
+        self.phases: list[str] = []
+        # Deeper than the publisher's 1, so every phase of a fast run is kept here.
+        latched = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.node.create_subscription(
+            String, PHASE_TOPIC, lambda message: self.phases.append(message.data), latched
+        )
         self.goals = ActionClient(self.node, PickPlace, "/classical/pick_place")
         self.nanoseconds = 1_000_000_000
         self.first_stamp = Time(sec=1, nanosec=0)
@@ -168,3 +181,42 @@ def test_missing_or_frozen_tf_fails_the_goal_with_stale_pose(task_node, tf_mode)
 
     assert result.done()
     assert result.result().result.error_code == int(ErrorCode.STALE_POSE)
+
+
+def test_phase_names_are_mirrored_latched_on_the_plain_phase_topic(task_node):
+    node = task_node()
+    qos = node._phase_publisher.qos_profile
+    assert (qos.depth, qos.durability, qos.reliability) == (
+        1,
+        DurabilityPolicy.TRANSIENT_LOCAL,
+        ReliabilityPolicy.RELIABLE,
+    )
+    sim = _Sim()
+    result = _run_home_goal(node, sim, lambda future: future.done())
+
+    assert result.result().result.error_code == int(ErrorCode.SUCCESS)
+    # A home-only goal localises, then moves HOME; names match the descriptor's states.
+    assert sim.phases == ["LOCALISE", "HOME"]
+
+
+def test_a_late_subscriber_gets_the_last_phase_including_hold(task_node):
+    # The sim runs faster than the wall-clock stale gate, so a live run cannot fault
+    # mid-move here; every phase change, HOLD included, goes through _publish_phase.
+    node = task_node()
+    feedback = []
+    node._publish_phase(SimpleNamespace(publish_feedback=feedback.append), Phase.HOLD)
+    assert [message.phase for message in feedback] == [int(Phase.HOLD)]
+
+    sim = _Sim()  # subscribes after the publish: only latching delivers it
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    executor.add_node(sim.node)
+    try:
+        deadline = time.monotonic() + 5.0
+        while not sim.phases and time.monotonic() < deadline:
+            executor.spin_once(timeout_sec=0.05)
+    finally:
+        executor.shutdown()
+        node.destroy_node()
+        sim.node.destroy_node()
+    assert sim.phases == ["HOLD"]

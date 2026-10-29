@@ -14,7 +14,7 @@ beat on the same task, so it deliberately has no retry and no closed-loop servoi
 /ee_pose_right ───────────────────┐
 /joint_states ────────────────────┤
 /hardware_state_controller/state ─┼─▶ task_node ─▶ /commanded_ee_right
-/classical/{can,paper}_pose ──────┘   action /classical/pick_place
+/classical/{can,paper}_pose ──────┘   action /classical/pick_place ─▶ /classical/phase
 ```
 
 The loader's IK follows `/commanded_ee_right`, so there is no IK or MoveIt here.
@@ -99,6 +99,11 @@ With `ee_interface: loader` (the default) it subscribes to `/ee_pose_right` and
 `/hardware_state_controller/state` (reliable), `/joint_states` and the two perception
 poses (best effort), and publishes `/commanded_ee_right` (`anvil_msgs/CommandedEEPose`)
 at `control_rate_hz` while a goal runs, and nothing otherwise.
+
+On every phase change it also publishes the phase name (`LOCALISE` … `HOME`, `HOLD`) on
+`/classical/phase` (`std_msgs/String`, reliable, transient local, depth 1), mirroring the
+action feedback. Viewers read this topic: a Zenoh bridge carries action feedback only by
+bridging the whole action server, which would also let the fabric send goals.
 
 With `ee_interface: pose` (fm-sim) it publishes `/commanded_ee_right` as a
 `geometry_msgs/PoseStamped` in the robot profile's `base_frame`, reads the measured TCP
@@ -231,8 +236,10 @@ the robot model, the cameras, or the scenario's table and paper.
 ### Control Descriptor
 
 `control/anvil_classical.yaml` draws the pipeline (perception, the PickPlace state
-machine read from the action feedback `phase`, skill, motion) in fm-sim's
-`control_descriptor` schema. The catalog entry names it for a pre-run view. The
+machine read from `/classical/phase`, skill, motion) in fm-sim's `control_descriptor`
+schema. It watches only plain topics a comms bridge carries: `/classical/can_pose` and
+`/classical/phase`. Motion has no live topic, since `/commanded_ee_right` is a command
+stream and is never bridged. The catalog entry names it for a pre-run view. The
 `control_descriptor` node, started by both `classical.launch.py` and `sim.launch.py`,
 publishes it as JSON (`std_msgs/String`, transient local, reliable, depth 1) on
 `/control/descriptor`, so a viewer reads it the same way on the robot and in sim.

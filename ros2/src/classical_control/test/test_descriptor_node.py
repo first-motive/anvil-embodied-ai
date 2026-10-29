@@ -21,14 +21,33 @@ def test_names_the_sim_entry(descriptor):
     assert descriptor["name"] == "anvil_classical"
 
 
-def test_state_machine_lists_the_pick_place_feedback_phases_in_order(descriptor):
+def test_state_machine_reads_the_phase_names_from_the_plain_phase_topic(descriptor):
     (machine,) = (block for block in descriptor["blocks"] if block["kind"] == "state_machine")
     assert machine["states"] == [phase.name for phase in Phase]
     assert machine["source"] == {
-        "topic": "/classical/pick_place/_action/feedback",
-        "type": "classical_control_msgs/action/PickPlace",
-        "field": "feedback.phase",
+        "topic": "/classical/phase",
+        "type": "std_msgs/msg/String",
+        "field": "data",
     }
+    assert machine["live"] == "/classical/phase"
+
+
+def _watched_topics(descriptor):
+    for block in descriptor["blocks"]:
+        for topic in (block.get("live"), block.get("sim", {}).get("live")):
+            if topic:
+                yield topic
+        if "source" in block:
+            yield block["source"]["topic"]
+
+
+def test_watches_only_plain_bridgeable_topics(descriptor):
+    # The comms bridge carries plain topics only: action feedback would need the whole
+    # action server bridged (exposing goals), and command streams are never bridged.
+    for topic in _watched_topics(descriptor):
+        assert "/_action/" not in topic, topic
+        assert not topic.startswith("/commanded_ee_"), topic
+    assert set(_watched_topics(descriptor)) == {"/classical/can_pose", "/classical/phase"}
 
 
 def test_every_edge_names_a_block(descriptor):
