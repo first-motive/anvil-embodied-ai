@@ -426,5 +426,11 @@ tests (`test_sim_catalog.py`, `test_sim_launch.py`, `test_task_node_pose.py`) ne
 installed workspace and skip under plain pytest; the catalog checks also skip without
 fm-sim's `fm_sim_bringup`, whose schema they validate against. The
 detector tests use three real chest frames and a median background in `test/fixtures/`.
+`test_controller_parity.py` fails when a robot launch publishes no descriptor in
+`control/`, or a descriptor, a robot launch and a sim catalog entry do not pair up. It
+reads the source tree only; the
+[`controller-parity` workflow](../../../.github/workflows/controller-parity.yml) runs it
+on every change to this package, and its last step is the command to run it locally.
+
 `test_sim_background.py` localises the seed-0 can in a rendered `can_on_table` frame per
 backend (`test/fixtures/sim/`) against the baked background, within 25 mm.
