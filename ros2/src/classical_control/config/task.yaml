@@ -80,8 +80,10 @@
 
     # --- Goal overrides (collection loop) ---
 
-    # Largest |grasp_dz| a goal may add to grasp and place height, in metres.
-    max_grasp_dz_m: 0.02
+    # Largest |grasp_dz| a goal may add to grasp and place height, in metres. 0.08 lets a
+    # short object (config/objects/box.yaml, 4.5 cm) be gripped near the table; the
+    # TCP floor (table_z + z_margin_m) still bounds the result. The can asks for 0.
+    max_grasp_dz_m: 0.08
     # Largest |yaw_offset| a goal may add to the grasp orientation about world z, in radians.
     # 0.35 rad (20 degrees) stays near the demonstrated orientation the IK is known to reach.
     max_yaw_offset_rad: 0.35

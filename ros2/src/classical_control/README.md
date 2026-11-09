@@ -130,7 +130,7 @@ loader's hardware gate the e-stop would not stop it. It refuses to start unless
 | `grasp_height_offset_m` | double | −0.035 | Added to the demos' grasp and place heights; grips below the can's neck |
 | `level_grasp` | bool | true | Stands the mined grasp's most vertical tool axis upright, so the can is carried and released upright |
 | `can_xy_bias_m` | double[2] | [0.0, 0.0] | Added to the detected can xy; take it from `eval_offline` |
-| `max_grasp_dz_m`, `max_yaw_offset_rad`, `max_closure_m` | double | 0.02, 0.35, 0.010 | Clamp limits for a goal's `grasp_dz`, `yaw_offset` and `closure_width` |
+| `max_grasp_dz_m`, `max_yaw_offset_rad`, `max_closure_m` | double | 0.02, 0.35, 0.010 | Clamp limits for a goal's `grasp_dz`, `yaw_offset` and `closure_width`. The shipped `task.yaml` raises the first to 0.08 so a short object can be gripped near the table |
 | `close_dwell_s`, `open_dwell_s` | double | 1.0, 0.8 | |
 | `gripper_open_m`, `gripper_closed_m`, `gripper_home_m` | double | 0.05, 0.0, 0.045 | |
 | `grasp_missed_threshold_m` | double | 0.008 | |
@@ -264,7 +264,10 @@ stop (any reason, Ctrl-C, crash) → HOME goal → summary.json
 The goal uses the `place_target`, `grasp_dz`, `closure_width` and `yaw_offset` fields
 (see the action table). Knob ranges come from `config/objects/<name>.yaml` and start at
 zero width; widen one at a time while attended. A run also sets perception's
-`can_height` from that file. `config/collect.yaml` lists the recorded topics (every
+`can_height` from that file. A fixed non-zero range is how an object of another height
+is gripped: `objects/box.yaml` (4.5 cm tall) pins `grasp_dz_m` 7 cm below the can grasp.
+Perception publishes no yaw, so a non-round object must be placed in the demos'
+grasp orientation. `config/collect.yaml` lists the recorded topics (every
 loader topic plus `/gripper/tactile/*`), the disk guard and the loop's margins and
 timeouts.
 

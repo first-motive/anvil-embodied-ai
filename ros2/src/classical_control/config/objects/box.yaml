@@ -1,0 +1,23 @@
+# Object config for the collection loop (collect_node --object box). Same shape as
+# can.yaml; see there for what each field means.
+#
+# A cardboard box 4.5 cm tall with a 7 x 14 cm footprint, measured 2026-11-09. Grasp it
+# across the 7 cm face, the same width as the can, so the demos' grasp fits. Perception
+# publishes no yaw, so place it with that face towards the demos' grasp direction.
+
+# Height of the upright object, in metres. The perception node's can_height is set to this
+# at the start of a run; the blob centroid is placed on the plane table_z + height_m / 2.
+height_m: 0.045
+
+knobs:
+  # The demos close the fingers level with the can top, 0.341 m, and task.yaml's
+  # grasp_height_offset_m brings that 3.5 cm down the can body, 9.9 cm above the table.
+  # A 4.5 cm box needs the fingers about 3 cm above the table, so a fixed further
+  # 7 cm down: TCP 0.236 m, 1.9 cm above task.yaml's floor (table_z + z_margin_m).
+  # Place moves with it, so the box lands on the paper. Needs max_grasp_dz_m >= 0.07
+  # in task.yaml, or the task node clamps it back and the gripper closes above the box.
+  grasp_dz_m: [-0.07, -0.07]
+  # Fully closed: a 7 cm face reads a little above the can's 0.0185 m, well clear of
+  # the missed-grasp threshold.
+  closure_m: [0.0, 0.0]
+  yaw_offset_rad: [0.0, 0.0]
